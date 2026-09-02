@@ -1,15 +1,16 @@
 /* 秋招工作台助手 · 内容脚本（接收 fill 指令，按 label/name/placeholder 启发式填充表单） */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'fill') {
-    // 异步执行填充并立即返回结果，避免页面格式化/校验脚本同步递归导致内容脚本卡死
-    (async () => {
-      try {
-        const r = await fillForm(msg);
-        sendResponse({ ok: true, filled: r.filled, unfilled: r.unfilled, all: r.all });
-      } catch (e) {
-        sendResponse({ ok: false, error: String(e) });
-      }
-    })();
+    try {
+      // 关键路径优化（对标市面一键填表插件）：匹配规划同步完成（毫秒级），
+      // DOM 写入放到 requestAnimationFrame 异步批处理，弹窗立即拿到 filled/unfilled/all，
+      // 绝不为等页面格式化脚本而阻塞。
+      const plan = planFill(msg);
+      writeFill(plan.matches);
+      sendResponse({ ok: true, filled: plan.matches.length, unfilled: plan.unfilled, all: plan.all });
+    } catch (e) {
+      sendResponse({ ok: false, error: String(e) });
+    }
     return true;
   }
 });
@@ -74,7 +75,7 @@ function buildLookup(msg) {
   return lookup;
 }
 
-function setValue(el, val) {
+function setElValue(el, val) {
   if (el.tagName === 'SELECT') {
     for (const opt of el.options) {
       if (opt.text.includes(val) || opt.value === val) { el.value = opt.value; break; }
@@ -91,25 +92,37 @@ function setValue(el, val) {
   }, 0);
 }
 
-async function fillForm(msg) {
+// 同步规划：扫描所有可填元素，按 lookup 计算「可填」与「未填」列表，毫秒级返回
+function planFill(msg) {
   const lookup = buildLookup(msg);
   const els = [...document.querySelectorAll('input, textarea, select')].filter(el => {
     const t = (el.type || '').toLowerCase();
     if (el.tagName === 'SELECT') return true;
     return !['hidden', 'submit', 'button', 'file', 'checkbox', 'radio'].includes(t);
   });
-  let count = 0;
+  const matches = [];
   const unfilled = [];
   const allLabels = [];
   for (const el of els) {
     const lab = labelOf(el);
     if (lab.trim()) allLabels.push(lab.trim());
     const key = canonicalize(lab);
-    let val = key ? lookup[key] : lookup['__' + lab.trim()];
-    if (!val) { if (lab.trim()) unfilled.push(lab.trim()); continue; }
-    try { setValue(el, val); count++; } catch (e) { /* 单个字段失败忽略 */ }
-    // 每个字段让出一次事件循环，避免长表单或页面校验脚本阻塞
-    await new Promise(r => setTimeout(r, 0));
+    const val = key ? lookup[key] : lookup['__' + lab.trim()];
+    if (val) matches.push({ el, val });
+    else if (lab.trim()) unfilled.push(lab.trim());
   }
-  return { filled: count, unfilled, all: allLabels };
+  return { matches, unfilled, all: allLabels };
+}
+
+// 异步批处理写入：每帧最多写 12 个字段，避免一次性阻塞主线程（弹窗早已拿到结果）
+function writeFill(matches) {
+  let i = 0;
+  function step() {
+    const end = Math.min(i + 12, matches.length);
+    for (; i < end; i++) {
+      try { setElValue(matches[i].el, matches[i].val); } catch (_) {}
+    }
+    if (i < matches.length) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
 }

@@ -273,96 +273,52 @@ document.getElementById('fill-go').addEventListener('click', async () => {
       });
   });
 
-  // 本地可用值（key→value），用于 LLM 映射后取值；真实信息不出本地
-  const KEYS = ['name', 'email', 'phone', 'school', 'major', 'city', 'gender', 'birth',
-    'political', 'english', 'grad', 'degree', 'gpa', 'address', 'idcard'];
-  const localMap = {};
-  const pmap = { name: 'name', email: 'email', phone: 'phone', city: 'city', school: 'school', major: 'major' };
-  for (const k in pmap) if (personal[k]) localMap[k] = personal[k];
-  fields.forEach(f => { const key = canonicalize(f.label); if (key && f.value) localMap[key] = f.value; });
-
+  // 第一轮：本地即时填充（毫秒级，不含 LLM，对标市面一键填表产品的「基础填充」）
   const r1 = await sendFill({});
   if (!r1.ok) { setStatus('填充失败：' + (r1.error || ''), true); return; }
-  let total = r1.filled || 0;
-  const unfilled = (r1.unfilled || []).filter(Boolean);
-  const atsOn = document.getElementById('ats-opt') && document.getElementById('ats-opt').checked;
+  const total0 = r1.filled || 0;
+  setStatus('✓ 已填充 ' + total0 + ' 个字段（基础信息已填好，可先核对）');
 
-  // ATS 高分简历优化模式：用 LLM 按 JD 关键词重写叙述类字段（硬事实原样保留）
-  if (atsOn) {
-    setStatus('✓ 已填充 ' + total + ' 个字段；ATS 正在按 JD 关键词优化叙述类字段…');
-    try {
-      const allLabels = (r1.all && r1.all.length) ? r1.all : unfilled;
-      const ar = await callApi('fill-ats', { labels: allLabels, company: sel.value });
-      if (ar.ok && ar.data && ar.data.ok && ar.data.map) {
-        const mapped = [];
-        for (const lab of allLabels) {
-          const val = ar.data.map[lab];
-          if (val) mapped.push({ key: '__' + lab, value: String(val) });
-        }
-        if (mapped.length) {
-          const rA = await sendFill({ mapped });
-          total = (rA.filled || 0);
-          setStatus('✓ ATS 优化完成，已填充 ' + total + ' 个字段'
-            + (ar.data.jd_used ? '（按该岗位 JD 关键词改写叙述类字段，硬事实原样保留）'
-                               : '（未匹配到该岗位 JD，按通用 ATS 最佳实践优化）')
-            + '，请核对并补全缺失项');
-          return;
-        }
-      } else if (ar.ok && ar.data && ar.data.reason === 'no-llm') {
-        setStatus('✓ 已填充 ' + total + ' 个字段；LLM 未配置，无法 ATS 优化（设置 → LLM 密钥管理）', true);
-        return;
-      } else if (ar.ok && ar.data && ar.data.reason) {
-        setStatus('✓ 已填充 ' + total + ' 个字段；ATS 优化跳过：' + (ar.data.message || ar.data.reason), true);
-        return;
-      }
-    } catch (e) { console.warn('fill-ats 失败，跳过：', e); }
-    setStatus('✓ 已填充 ' + total + ' 个字段（ATS 优化跳过：调用失败），请核对并补全缺失项');
+  const atsOn = document.getElementById('ats-opt') && document.getElementById('ats-opt').checked;
+  // AI 待补全字段：ATS 模式覆盖全部叙述类字段（重新优化）；普通模式只补未命中的字段
+  const aiLabels = atsOn
+    ? (r1.all && r1.all.length ? r1.all : [])
+    : (r1.unfilled || []).filter(Boolean);
+
+  if (!aiLabels.length) {
+    setStatus('✓ 已尝试填充 ' + total0 + ' 个字段，无需 AI 补全，请核对并补全缺失项');
     return;
   }
 
-  setStatus('✓ 已填充 ' + total + ' 个字段，DeepSeek 正在核对剩余 ' + unfilled.length + ' 个字段…');
-
-  // 第二轮：规则未命中字段 → DeepSeek 规范键映射后补填（隐私：只发 label，不发真实值）
-  if (unfilled.length) {
-    try {
-      const mr = await callApi('smart-fill-map', { labels: unfilled, available_keys: KEYS });
-      if (mr.ok && mr.data && mr.data.ok && mr.data.map) {
-        const mapped = [];
-        for (const lab of unfilled) {
-          const key = mr.data.map[lab];
-          if (key && localMap[key]) mapped.push({ key, value: localMap[key] });
-        }
-        if (mapped.length) {
-          const r2 = await sendFill({ mapped });
-          total += (r2.filled || 0);
-        }
+  // 第二轮（单次 LLM 调用，后台补全，不阻塞首次填充）：语义匹配 + 可选 ATS 重写
+  setStatus('✓ 已填充 ' + total0 + ' 个字段；AI 正在补全剩余 ' + aiLabels.length + ' 项（基础信息已可用）…');
+  try {
+    const er = await callApi('fill-enhance', { labels: aiLabels, company: sel.value, ats: atsOn });
+    if (er.ok && er.data && er.data.ok && er.data.map) {
+      const mapped = [];
+      for (const lab of aiLabels) {
+        const val = er.data.map[lab];
+        if (val) mapped.push({ key: '__' + lab, value: String(val) });
       }
-    } catch (e) { console.warn('smart-fill-map 失败，跳过：', e); }
-  }
-
-  // 第三轮：仍缺失 → 用 DeepSeek 对用户「网申信息总汇」做语义检索匹配回填（发送 label+用户值）
-  if (unfilled.length) {
-    try {
-      const fr = await callApi('fill-netapply', { labels: unfilled, company: sel.value });
-      if (fr.ok && fr.data && fr.data.ok && fr.data.map) {
-        const mapped = [];
-        for (const lab of unfilled) {
-          const val = fr.data.map[lab];
-          if (val) mapped.push({ key: '__' + lab, value: String(val) });
-        }
-        if (mapped.length) {
-          const r3 = await sendFill({ mapped });
-          total += (r3.filled || 0);
-          setStatus('✓ 已尝试填充 ' + total + ' 个字段（含 LLM 语义匹配 ' + mapped.length + ' 项），请核对并补全缺失项');
-          return;
-        }
-      } else if (fr.ok && fr.data && fr.data.reason === 'no-llm') {
-        setStatus('✓ 已填充 ' + total + ' 个字段；LLM 未配置，无法语义匹配其余 ' + unfilled.length + ' 项（设置 → LLM 密钥管理）', true);
+      if (mapped.length) {
+        const rE = await sendFill({ mapped });
+        const done = (rE.filled || 0);
+        setStatus('✓ 已填充 ' + total0 + ' 个基础字段，AI 已补全 ' + done + ' 个字段'
+          + (atsOn ? '（按该岗位 JD 优化叙述类内容，硬事实原样保留）' : '（语义匹配补全）')
+          + '，请核对并补全缺失项');
         return;
       }
-    } catch (e) { console.warn('fill-netapply 失败，跳过：', e); }
-  }
-  setStatus('✓ 已尝试填充 ' + total + ' 个字段，请核对并补全缺失项');
+      setStatus('✓ 已填充 ' + total0 + ' 个字段；AI 未找到更多可补内容，请手动补全缺失项');
+      return;
+    } else if (er.ok && er.data && er.data.reason === 'no-llm') {
+      setStatus('✓ 已填充 ' + total0 + ' 个字段；LLM 未配置，无法 AI 补全（设置 → LLM 密钥管理）', true);
+      return;
+    } else if (er.ok && er.data && er.data.reason) {
+      setStatus('✓ 已填充 ' + total0 + ' 个字段；AI 补全跳过：' + (er.data.message || er.data.reason), true);
+      return;
+    }
+  } catch (e) { console.warn('fill-enhance 失败，跳过：', e); }
+  setStatus('✓ 已填充 ' + total0 + ' 个字段（AI 补全跳过：调用失败），请核对并补全缺失项');
 });
 
 /* ---------- 推荐简历（按公司名在简历中心语义检索） ---------- */

@@ -800,6 +800,79 @@ def extension_fill_ats(payload: dict):
     return {"ok": True, "map": clean, "ats": True, "jd_used": bool(jd)}
 
 
+@app.post("/api/extension/fill-enhance")
+def extension_fill_enhance(payload: dict):
+    """一键填表「快速补全」：把『语义匹配 + （可选）ATS 重写』合成单次 LLM 调用，
+    返回全部表单字段的 {label: value}。替代原先 fill-netapply / fill-ats / smart-fill-map
+    的多次串行调用，使扩展端首次填充即时返回、AI 补全在后台单次完成（对标市面产品）。
+
+    入参：{ labels:[表单字段显示名...], company:可选, ats:bool, jd:可选 }
+    返回：{ ok:True, map:{ label: value|null }, ats, jd_used }
+    """
+    from server.services import llm
+
+    labels = payload.get("labels") or []
+    company = (payload.get("company") or "").strip()
+    ats = bool(payload.get("ats"))
+    if not labels:
+        return {"ok": True, "map": {}}
+
+    entries = _gather_netapply_entries()
+    resume_text = _resume_text_for_company(company) if company else ""
+    if not entries and not resume_text:
+        return {"ok": False, "reason": "no-data", "message": "网申信息为空，请先录入信息"}
+
+    if not llm.is_configured():
+        return {"ok": False, "reason": "no-llm",
+                "message": "未配置 LLM（设置 → LLM 密钥管理），无法智能补全"}
+
+    jd = (payload.get("jd") or "").strip()
+    if not jd:
+        jd = _fetch_jd_for_company(company)
+    entries_txt = "\n".join(f'- [{e.get("group", "")}] {e["label"]}：{e["value"]}' for e in entries)
+
+    if ats:
+        system = (
+            "你是 ATS（Applicant Tracking System，申请人追踪系统）简历优化助手。企业用 ATS 对网申表单做关键词匹配与解析评分。"
+            "任务：根据用户已有的真实信息（网申信息总汇 + 对应公司简历），为给定的网页表单字段，生成最易被 ATS 打高分的填写内容。\n"
+            "铁律与规则：\n"
+            "1) 严格忠于用户真实信息，绝不可编造用户没有的经历、公司、技能、数据、证书。\n"
+            "2) 以下「硬事实」字段必须原样返回，不得改写或润色：姓名、邮箱、电话/手机、身份证、出生年月、性别、"
+            "毕业院校、专业、学历/学位、毕业时间、GPA/绩点、政治面貌、地址、英语等级(四六级)、期望城市。\n"
+            "3) 对于「开放性叙述」字段（实习/工作/项目经历、自我评价、个人优势、技能总结、获奖、科研、社团活动、"
+            "求职意向等），在遵守第1条前提下，优先从「网申信息总汇」和「简历中心对应公司简历」中提取真实经历，"
+            "再用 JD 中的关键词（岗位要求的技能/工具/能力/行业术语）重写，使其更易被 ATS 命中："
+            "动词开头、量化成果、使用标准术语；保持简洁（适合表单文本框，通常 ≤ 300 字）。\n"
+            "4) 若某字段在用户真实信息中找不到任何对应内容，返回 null（不要编造）。\n"
+            "5) 只返回 JSON 对象 { \"表单字段名\": \"填写内容或null\" }，不要任何解释或 markdown。"
+        )
+    else:
+        system = (
+            "你是网申填表助手。任务：给定一组网页表单字段的显示名称（label/placeholder/aria-label），"
+            "从下方「用户网申信息」里为每个字段挑出最匹配的值；若信息中没有对应内容则映射到 null。\n"
+            "匹配规则：\n"
+            "1. 严格按语义匹配（如「毕业院校」匹配院校字段，「政治面貌」匹配政治面貌字段）；\n"
+            "2. 「链接/文件」类字段（作品集、个人主页、简历等）只适合填到『作品集/个人主页/URL』类表单字段；\n"
+            "3. 简历中心对应公司的简历文本是事实补充，可用于回答「项目/实习/技能/自我评价」类字段，但不要编造未出现的内容；\n"
+            "4. 只返回 JSON 对象 { \"表单字段名\": \"对应值或null\" }，不要任何解释或 markdown。"
+        )
+    user = (
+        f"# 目标岗位 JD\n{jd or '（未提供 JD，按通用 ATS 最佳实践优化：动词开头、量化、关键词突出）'}\n\n"
+        f"# 用户网申信息总汇（含已提取的 PDF/Word 文件内容）\n{entries_txt}\n\n"
+        + (f"# 简历中心「{company}」定制简历原文\n{resume_text[:4000]}\n\n" if resume_text else "")
+        + f"# 需要填的表单字段\n" + "\n".join("- " + l for l in labels)
+    )
+    try:
+        out = llm.chat(system, user, json_mode=True, temperature=0.2, timeout=110)
+        mp = json.loads(out)
+        if not isinstance(mp, dict):
+            raise ValueError("LLM 返回非 JSON 对象")
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "reason": "parse-error", "message": str(e)[:200]}
+    clean = {lab: (mp.get(lab) or None) for lab in labels}
+    return {"ok": True, "map": clean, "ats": ats, "jd_used": bool(jd)}
+
+
 @app.post("/api/extension/recommend-resume")
 def extension_recommend_resume(payload: dict):
     """Edge 扩展「LLM 检索简历」：按公司名在简历中心检索匹配的定制简历版本。

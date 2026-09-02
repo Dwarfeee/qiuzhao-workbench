@@ -68,6 +68,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     relay('fill-ats', '/api/extension/fill-ats', msg.payload).then(sendResponse);
     return true;
   }
+  if (msg.type === 'fill-enhance') {
+    relay('fill-enhance', '/api/extension/fill-enhance', msg.payload).then(sendResponse);
+    return true;
+  }
   if (msg.type === 'recommend-resume') {
     relay('recommend-resume', '/api/extension/recommend-resume', msg.payload).then(sendResponse);
     return true;
