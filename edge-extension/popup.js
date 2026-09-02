@@ -255,7 +255,7 @@ document.getElementById('fill-go').addEventListener('click', async () => {
   const unfilled = (r1.unfilled || []).filter(Boolean);
   setStatus('✓ 已填充 ' + total + ' 个字段，DeepSeek 正在核对剩余 ' + unfilled.length + ' 个字段…');
 
-  // 第二轮：把规则未命中的字段名交给 DeepSeek 映射，再补填（只发 label，不发真实值）
+  // 第二轮：规则未命中字段 → DeepSeek 规范键映射后补填（隐私：只发 label，不发真实值）
   if (unfilled.length) {
     try {
       const mr = await callApi('smart-fill-map', { labels: unfilled, available_keys: KEYS });
@@ -272,7 +272,54 @@ document.getElementById('fill-go').addEventListener('click', async () => {
       }
     } catch (e) { console.warn('smart-fill-map 失败，跳过：', e); }
   }
-  setStatus('✓ 已尝试填充 ' + total + ' 个字段（DeepSeek 辅助 ' + (unfilled.length ? '已启用' : '无需') + '），请核对并补全缺失项');
+
+  // 第三轮：仍缺失 → 用 DeepSeek 对用户「网申信息总汇」做语义检索匹配回填（发送 label+用户值）
+  if (unfilled.length) {
+    try {
+      const fr = await callApi('fill-netapply', { labels: unfilled, company: sel.value });
+      if (fr.ok && fr.data && fr.data.ok && fr.data.map) {
+        const mapped = [];
+        for (const lab of unfilled) {
+          const val = fr.data.map[lab];
+          if (val) mapped.push({ key: '__' + lab, value: String(val) });
+        }
+        if (mapped.length) {
+          const r3 = await sendFill({ mapped });
+          total += (r3.filled || 0);
+          setStatus('✓ 已尝试填充 ' + total + ' 个字段（含 LLM 语义匹配 ' + mapped.length + ' 项），请核对并补全缺失项');
+          return;
+        }
+      } else if (fr.ok && fr.data && fr.data.reason === 'no-llm') {
+        setStatus('✓ 已填充 ' + total + ' 个字段；LLM 未配置，无法语义匹配其余 ' + unfilled.length + ' 项（设置 → LLM 密钥管理）', true);
+        return;
+      }
+    } catch (e) { console.warn('fill-netapply 失败，跳过：', e); }
+  }
+  setStatus('✓ 已尝试填充 ' + total + ' 个字段，请核对并补全缺失项');
+});
+
+/* ---------- 推荐简历（按公司名在简历中心语义检索） ---------- */
+document.getElementById('rec-resume').addEventListener('click', async () => {
+  const sel = document.getElementById('f-company');
+  const company = (sel.value || '').trim();
+  if (!company) { setStatus('请先在上方选择企业，再推荐简历', true); return; }
+  setStatus('正在检索简历中心…');
+  try {
+    const r = await callApi('recommend-resume', { company });
+    if (r.ok && r.data && r.data.ok) {
+      const d = r.data;
+      const box = document.getElementById('rec-result');
+      box.style.display = 'block';
+      box.innerHTML = '<div style="font-weight:600;margin-bottom:4px">📄 推荐简历：' + esc(d.company) + ' · ' + esc(d.position || '') + '</div>'
+        + '<div class="muted" style="margin-bottom:6px">' + esc(d.reason || '') + '</div>'
+        + '<a class="btn primary" href="' + esc(d.pdf_url) + '" target="_blank">打开 / 下载 PDF</a>'
+        + (d.candidates && d.candidates.length > 1 ? '<div class="muted" style="margin-top:6px">共 ' + d.candidates.length + ' 个候选版本</div>' : '');
+      setStatus('✓ 已找到「' + d.company + '」的定制简历，点上方按钮打开 PDF');
+    } else {
+      const msg = (r.ok && r.data && (r.data.message || r.data.reason)) || r.error || '未找到';
+      setStatus('未找到简历：' + msg + '（可先在精投中心为该公司生成定制简历）', true);
+    }
+  } catch (e) { setStatus('检索失败：' + e.message, true); }
 });
 
 /* ---------- 注入页面的提取函数（在目标标签页上下文执行） ---------- */

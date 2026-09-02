@@ -1417,13 +1417,30 @@ async function renderNetApply() {
   list.innerHTML = Object.entries(groups).map(([cat, items]) =>
     `<div class="card" style="margin-bottom:12px"><h3>${esc(cat)} <span class="muted" style="font-weight:400">(${items.length})</span></h3>
       <table class="tbl"><tbody>
-      ${items.map(r => `<tr>
+      ${items.map(r => {
+        const kind = r.kind || 'text';
+        let valHtml;
+        if (kind === 'file') {
+          const ext = (r.file_ext || '').toUpperCase();
+          const icon = /pdf/i.test(ext) ? '📕' : /doc/i.test(ext) ? '📘' : /png|jpe?g|gif|webp/i.test(ext) ? '🖼' : '📎';
+          valHtml = r.file_path
+            ? `<a href="/api/netapply/${r.id}/file" target="_blank" title="打开/下载附件">${icon} ${esc(r.file_name || r.value || '附件')}</a>`
+            : '<span class="muted">（附件缺失）</span>';
+        } else if (kind === 'link') {
+          const u = r.link_url || r.value || '';
+          valHtml = u ? `<a href="${esc(u)}" target="_blank" rel="noopener">🔗 ${esc(u)}</a>` : '<span class="muted">（空）</span>';
+        } else {
+          valHtml = esc(r.value) || '<span class="muted">（空）</span>';
+        }
+        const kindTag = kind === 'file' ? '<span class="tag">文件</span>' : kind === 'link' ? '<span class="tag">链接</span>' : '';
+        return `<tr>
         <td style="width:28%"><b>${esc(r.label)}</b></td>
-        <td>${esc(r.value) || '<span class="muted">（空）</span>'}${r.hint ? ` <span class="muted">· ${esc(r.hint)}</span>` : ''}</td>
+        <td>${valHtml}${kindTag}${r.hint ? ` <span class="muted">· ${esc(r.hint)}</span>` : ''}</td>
         <td style="width:130px;text-align:right;white-space:nowrap">
           <button class="btn sm" onclick="editNetapply(${r.id})">编辑</button>
           <button class="btn sm danger" onclick="delNetapply(${r.id})">删除</button>
-        </td></tr>`).join('')}
+        </td></tr>`;
+      }).join('')}
       </tbody></table></div>`).join('');
 }
 
@@ -1431,34 +1448,97 @@ function netapplyForm(id) {
   const title = id ? `编辑字段 #${id}` : '添加网申字段';
   openModal(`<h3>${title}</h3>
     <div class="form-col">
+      <label>类型</label>
+      <select id="na-kind" class="input">
+        <option value="text">文本</option>
+        <option value="file">文件（PDF / Word / 图片）</option>
+        <option value="link">网络链接</option>
+      </select>
       <label>分组</label><input id="na-cat" class="input" placeholder="如 基本信息 / 教育 / 其他">
       <label>字段名</label><input id="na-label" class="input" placeholder="如 姓名 / 邮箱 / 政治面貌">
-      <label>值</label><input id="na-value" class="input" placeholder="填写内容">
+      <div id="na-text-wrap"><label>值</label><input id="na-value" class="input" placeholder="填写内容"></div>
+      <div id="na-file-wrap" style="display:none">
+        <label>附件</label>
+        <input type="file" id="na-file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" class="input">
+        <button class="btn sm" id="na-upload" type="button" style="margin:6px 0">⬆ 上传附件</button>
+        <div id="na-file-info" class="muted"></div>
+        <input type="hidden" id="na-file-path"><input type="hidden" id="na-file-name"><input type="hidden" id="na-file-ext">
+      </div>
+      <div id="na-link-wrap" style="display:none"><label>链接 URL</label><input id="na-link" class="input" placeholder="https://..."></div>
       <label>备注 / 提示</label><input id="na-hint" class="input" placeholder="可选">
     </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">取消</button>
       <button class="btn primary" id="na-save">保存</button>
     </div>`);
+
+  const kindSel = document.getElementById('na-kind');
+  const toggleKind = () => {
+    const k = kindSel.value;
+    document.getElementById('na-text-wrap').style.display = k === 'text' ? 'block' : 'none';
+    document.getElementById('na-file-wrap').style.display = k === 'file' ? 'block' : 'none';
+    document.getElementById('na-link-wrap').style.display = k === 'link' ? 'block' : 'none';
+  };
+  kindSel.addEventListener('change', toggleKind);
+
+  document.getElementById('na-upload').onclick = async () => {
+    const f = document.getElementById('na-file').files[0];
+    if (!f) { toast('请先选择文件', true); return; }
+    const fd = new FormData();
+    fd.append('file', f);
+    try {
+      const r = await fetch('/api/netapply/upload', { method: 'POST', body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) { toast(d.detail || d.message || '上传失败', true); return; }
+      document.getElementById('na-file-path').value = d.file_path;
+      document.getElementById('na-file-name').value = d.file_name;
+      document.getElementById('na-file-ext').value = d.file_ext;
+      document.getElementById('na-value').value = d.file_name;
+      document.getElementById('na-file-info').textContent = '✓ 已上传：' + d.file_name;
+    } catch (e) { toast('上传失败：' + e.message, true); }
+  };
+
   if (id) {
     api('/api/netapply').then(rows => {
       const r = rows.find(x => x.id === id);
       if (r) {
+        kindSel.value = r.kind || 'text'; toggleKind();
         document.getElementById('na-cat').value = r.category || '';
         document.getElementById('na-label').value = r.label || '';
         document.getElementById('na-value').value = r.value || '';
         document.getElementById('na-hint').value = r.hint || '';
+        document.getElementById('na-link').value = r.link_url || '';
+        if (r.kind === 'file' && r.file_name) {
+          document.getElementById('na-file-path').value = r.file_path || '';
+          document.getElementById('na-file-name').value = r.file_name || '';
+          document.getElementById('na-file-ext').value = r.file_ext || '';
+          document.getElementById('na-file-info').textContent = '当前附件：' + r.file_name;
+        }
       }
     }).catch(() => {});
   }
   document.getElementById('na-save').onclick = async () => {
+    const kind = kindSel.value;
+    const label = document.getElementById('na-label').value.trim();
+    if (!label) { toast('字段名必填', true); return; }
     const body = {
       category: document.getElementById('na-cat').value.trim() || '基本信息',
-      label: document.getElementById('na-label').value.trim(),
-      value: document.getElementById('na-value').value,
-      hint: document.getElementById('na-hint').value
+      label,
+      hint: document.getElementById('na-hint').value,
+      kind
     };
-    if (!body.label) { toast('字段名必填', true); return; }
+    if (kind === 'text') body.value = document.getElementById('na-value').value;
+    else if (kind === 'file') {
+      body.file_path = document.getElementById('na-file-path').value;
+      body.file_name = document.getElementById('na-file-name').value;
+      body.file_ext = document.getElementById('na-file-ext').value;
+      body.value = document.getElementById('na-value').value;
+      if (!body.file_path) { toast('请先上传附件', true); return; }
+    } else {
+      body.link_url = document.getElementById('na-link').value.trim();
+      body.value = body.link_url;
+      if (!body.link_url) { toast('请填写链接 URL', true); return; }
+    }
     try {
       if (id) await api(`/api/netapply/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
       else await api('/api/netapply', { method: 'POST', body: JSON.stringify(body) });

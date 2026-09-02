@@ -304,12 +304,18 @@ def add_netapply(payload: dict):
     label = (payload.get("label") or "").strip()
     if not label:
         raise HTTPException(400, "label 必填")
+    kind = (payload.get("kind") or "text").strip()
+    if kind not in ("text", "file", "link"):
+        kind = "text"
     conn = connect()
     try:
         cur = conn.execute(
-            "INSERT INTO net_apply_info (category, label, value, hint, order_no, created_at, updated_at) "
-            "VALUES (?,?,?,?,?, datetime('now','localtime'), datetime('now','localtime'))",
-            (category, label, payload.get("value", "") or "", payload.get("hint", "") or "",
+            "INSERT INTO net_apply_info (category, label, value, hint, kind, file_path, file_name, "
+            "file_ext, link_url, order_no, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?, datetime('now','localtime'), datetime('now','localtime'))",
+            (category, label, payload.get("value", "") or "", payload.get("hint", "") or "", kind,
+             payload.get("file_path") or "", payload.get("file_name") or "",
+             payload.get("file_ext") or "", payload.get("link_url") or "",
              int(payload.get("order_no", 0) or 0)))
         conn.commit()
         return {"id": cur.lastrowid, "ok": True}
@@ -321,8 +327,9 @@ def add_netapply(payload: dict):
 def update_netapply(nid: int, payload: dict):
     conn = connect()
     try:
-        fields, vals = [], []
-        for col in ("category", "label", "value", "hint", "order_no"):
+        fields, vals = []
+        for col in ("category", "label", "value", "hint", "order_no", "kind",
+                    "file_path", "file_name", "file_ext", "link_url"):
             if col in payload:
                 fields.append(f"{col}=?")
                 vals.append(payload[col])
@@ -342,11 +349,65 @@ def update_netapply(nid: int, payload: dict):
 def delete_netapply(nid: int):
     conn = connect()
     try:
+        row = conn.execute("SELECT file_path FROM net_apply_info WHERE id=?", (nid,)).fetchone()
         conn.execute("DELETE FROM net_apply_info WHERE id=?", (nid,))
         conn.commit()
+        if row and row["file_path"]:
+            try:
+                p = Path(row["file_path"])
+                if p.exists():
+                    p.unlink()
+            except OSError:
+                pass
         return {"ok": True}
     finally:
         conn.close()
+
+
+# 网申信息总汇：附件上传（PDF/Word/图片/等）。文件存本地 uploads/netapply/，库里只存路径。
+_NETAPPLY_EXTS = {
+    ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".txt": "text/plain", ".md": "text/markdown",
+}
+
+
+@app.post("/api/netapply/upload")
+async def netapply_upload(file: UploadFile = File(...)):
+    import re
+    raw = (file.filename or "file").strip()
+    ext = Path(raw).suffix.lower()
+    if ext not in _NETAPPLY_EXTS:
+        raise HTTPException(400, f"不支持的文件类型：{ext or '无扩展名'}（仅支持 PDF/Word/PNG/JPG 等）")
+    config.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r'[\\/*?:<>"|]', '_', Path(raw).stem) or "file"
+    # 防重名
+    dst = config.UPLOAD_DIR / f"{safe}{ext}"
+    i = 1
+    while dst.exists():
+        dst = config.UPLOAD_DIR / f"{safe}_{i}{ext}"
+        i += 1
+    data = await file.read()
+    dst.write_bytes(data)
+    return {"ok": True, "file_path": str(dst), "file_name": raw, "file_ext": ext.lstrip('.')}
+
+
+@app.get("/api/netapply/{nid}/file")
+def netapply_file(nid: int):
+    conn = connect()
+    try:
+        row = conn.execute("SELECT file_path, file_name FROM net_apply_info WHERE id=?", (nid,)).fetchone()
+    finally:
+        conn.close()
+    if not row or not row["file_path"]:
+        raise HTTPException(404, "该字段没有附件")
+    p = Path(row["file_path"])
+    if not p.exists():
+        raise HTTPException(404, "附件文件不存在（可能已被移动）")
+    media = _NETAPPLY_EXTS.get(p.suffix.lower(), "application/octet-stream")
+    return FileResponse(p, media_type=media, filename=row["file_name"] or p.name)
 
 
 # ================================================================ Edge 扩展接口（捕捉→岗位池 / 填表取数）
@@ -500,6 +561,137 @@ def extension_smart_fill_map(payload: dict):
         else:
             clean[lab] = None
     return {"ok": True, "map": clean}
+
+
+@app.post("/api/extension/fill-netapply")
+def extension_fill_netapply(payload: dict):
+    """Edge 扩展「LLM 语义填表」：把网页表单字段 label 与用户的网申信息总汇做语义匹配，
+    返回 {label: value} 供扩展回填。
+
+    入参：{ labels:[字段显示名...], company: 可选 }
+    返回：{ ok:True, map:{ label: value|null } }
+    说明：为支持语义检索，会把用户网申字段的（label+值）发送给 LLM；均为用户本人数据。
+    """
+    from server.services import llm
+
+    labels = payload.get("labels") or []
+    if not labels:
+        return {"ok": True, "map": {}}
+
+    conn = connect()
+    try:
+        p = conn.execute("SELECT * FROM personal_info WHERE id=1").fetchone()
+        personal = dict(p) if p else {}
+        rows = conn.execute(
+            "SELECT category, label, value, kind, link_url FROM net_apply_info "
+            "ORDER BY order_no, id").fetchall()
+        fields = [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+    # 可填值来源
+    entries = []
+    pm = {"name": personal.get("name"), "email": personal.get("email"), "phone": personal.get("phone"),
+          "school": personal.get("school"), "major": personal.get("major"), "city": personal.get("city"),
+          "gender": personal.get("gender"), "birth": personal.get("birth"), "political": personal.get("political"),
+          "english": personal.get("english"), "grad": personal.get("grad"), "degree": personal.get("degree"),
+          "gpa": personal.get("gpa"), "address": personal.get("address"), "idcard": personal.get("idcard")}
+    for k, v in pm.items():
+        if v:
+            entries.append({"label": k, "value": str(v).strip()})
+    for f in fields:
+        v = (f["link_url"] or f["value"]) if f["kind"] == "link" else f["value"]
+        if v and str(v).strip():
+            entries.append({"label": f["label"], "value": str(v).strip(),
+                            "group": f["category"] or ""})
+
+    if not entries:
+        return {"ok": False, "reason": "no-data", "message": "网申信息总汇为空，请先录入信息"}
+
+    if not llm.is_configured():
+        return {"ok": False, "reason": "no-llm",
+                "message": "未配置 LLM（设置 → LLM 密钥管理），无法做语义匹配"}
+
+    entries_txt = "\n".join(f'- [{e.get("group", "")}] {e["label"]}：{e["value"]}' for e in entries)
+    system = (
+        "你是网申填表助手。任务：给定一组网页表单字段的显示名称（label/placeholder/aria-label），"
+        "从下方「用户网申信息总汇」里为每个字段挑出最匹配的值；若总汇里没有对应信息则映射到 null。\n"
+        "匹配规则：\n"
+        "1. 严格按语义匹配（如「毕业院校」匹配总汇里的院校字段，「政治面貌」匹配政治面貌字段）；\n"
+        "2. 总汇里的「链接/文件」类字段（作品集、个人主页等）只适合填到『作品集/个人主页/URL』类表单字段；\n"
+        "3. 只返回 JSON 对象 { \"表单字段名\": \"对应值或null\" }，不要任何解释或 markdown。"
+    )
+    user = (
+        f"# 用户网申信息总汇\n{entries_txt}\n\n"
+        f"# 需要填的表单字段\n" + "\n".join("- " + l for l in labels)
+    )
+    try:
+        out = llm.chat(system, user, json_mode=True, temperature=0.1, timeout=90)
+        mp = json.loads(out)
+        if not isinstance(mp, dict):
+            raise ValueError("LLM 返回非 JSON 对象")
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "reason": "parse-error", "message": str(e)[:200]}
+    clean = {lab: (mp.get(lab) or None) for lab in labels}
+    return {"ok": True, "map": clean}
+
+
+@app.post("/api/extension/recommend-resume")
+def extension_recommend_resume(payload: dict):
+    """Edge 扩展「LLM 检索简历」：按公司名在简历中心检索匹配的定制简历版本。
+
+    入参：{ company:str, position:str可选, jd:str可选 }
+    返回：{ ok, resume_version_id, company, position, pdf_url, reason, candidates:[...] }
+    """
+    from server.services import llm
+
+    company = (payload.get("company") or "").strip()
+    position = (payload.get("position") or "").strip()
+    jd = (payload.get("jd") or "").strip()
+    if not company:
+        return {"ok": False, "reason": "no-company", "message": "未提供公司名"}
+
+    conn = connect()
+    try:
+        vers = conn.execute(
+            "SELECT id, company, position, diff_status, status, created_at FROM resume_version "
+            "WHERE company LIKE ? ORDER BY created_at DESC", ("%" + company + "%",)).fetchall()
+        vers = [dict(v) for v in vers]
+    finally:
+        conn.close()
+
+    if not vers:
+        return {"ok": False, "reason": "no-resume",
+                "message": f"简历中心没有「{company}」的定制简历（可先在精投中心生成对应简历）",
+                "candidates": []}
+
+    passed = [v for v in vers if v["diff_status"] == "pass"]
+    cands = passed or vers
+    best = cands[0]
+    reason = (f"该岗位与「{best['company']}·{best['position'] or ''}」定制简历最匹配"
+              f"（同公司定制版，diff {'通过' if best['diff_status'] == 'pass' else '未通过'}）。")
+    if len(cands) > 1 and llm.is_configured():
+        try:
+            list_txt = "\n".join(
+                f'{i + 1}. id={v["id"]} 公司={v["company"]} 岗位={v["position"] or ""} diff={v["diff_status"]}'
+                for i, v in enumerate(cands))
+            system = (
+                "你是简历匹配助手。用户要在某公司的网申/投递页上传简历。下面是从简历中心检索到的"
+                "该（或相近）公司的定制简历版本列表。请挑出最合适的一个并简述理由。"
+                "只返回 JSON：{ \"pick_id\": 数字, \"reason\": \"中文理由\" }，不要 markdown。")
+            user = (f"目标公司：{company}\n目标岗位：{position or '未指定'}\n"
+                     f"JD（如有）：{jd[:800]}\n\n候选简历：\n{list_txt}")
+            out = llm.chat(system, user, json_mode=True, temperature=0.2, timeout=60)
+            rp = json.loads(out)
+            chosen = next((v for v in cands if v["id"] == rp.get("pick_id")), None)
+            if chosen:
+                best = chosen
+                reason = rp.get("reason") or reason
+        except Exception:  # noqa: BLE001
+            pass
+    return {"ok": True, "resume_version_id": best["id"], "company": best["company"],
+            "position": best["position"], "pdf_url": f"/api/resume/versions/{best['id']}/pdf",
+            "reason": reason, "candidates": cands}
 
 
 # 已知招聘平台域名（启发式兜底时用于排除）
@@ -865,10 +1057,11 @@ def list_applications():
     conn = connect()
     try:
         rows = [dict(r) for r in conn.execute(
-            """SELECT a.*, j.company AS j_company, j.title AS j_title, j.url AS j_url,
+            """SELECT a.*, j.company AS j_company, j.title AS j_title,
+                      COALESCE(a.job_url, j.url) AS j_url,
                       j.location AS j_location, j.company_scale,
                       j.fit_score, j.grade, j.match_analysis, j.direction,
-                      j.source_url AS j_source_url, j.source AS j_source,
+                      COALESCE(a.source_url, j.source_url) AS j_source_url, j.source AS j_source,
                       rv.diff_status, rv.pdf_path AS rv_pdf
                FROM application a JOIN job j ON j.id=a.job_id
                LEFT JOIN resume_version rv ON rv.id=a.resume_version_id

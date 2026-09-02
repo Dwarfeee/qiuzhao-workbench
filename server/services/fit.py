@@ -410,8 +410,10 @@ def shortlist(job_id: int) -> dict:
         exist = conn.execute("SELECT id, status FROM application WHERE job_id=?", (job_id,)).fetchone()
         if exist:
             return {"application_id": exist["id"], "status": exist["status"], "msg": "已在流程中"}
-        cur = conn.execute("INSERT INTO application (job_id, status, source) VALUES (?, 'Shortlisted', ?)",
-                           (job_id, job["source"]))
+        cur = conn.execute(
+            "INSERT INTO application (job_id, status, source, source_url, job_url) "
+            "VALUES (?, 'Shortlisted', ?, ?, ?)",
+            (job_id, job["source"], job.get("source_url") or "", job.get("url") or ""))
         aid = cur.lastrowid
         conn.execute("UPDATE job SET status='Shortlisted' WHERE id=?", (job_id,))
         conn.execute("INSERT INTO job_event (job_id, event_type, detail) VALUES (?,?,?)",

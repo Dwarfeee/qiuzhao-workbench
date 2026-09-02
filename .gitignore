@@ -37,3 +37,6 @@ Thumbs.db
 
 # --- 依赖安装目录（若将来本地建 venv） ---
 node_modules/
+
+uploads/
+_server.log

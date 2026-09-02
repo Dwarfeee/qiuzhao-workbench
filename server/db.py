@@ -571,6 +571,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for col in ("event_key", "error_message"):
         if col not in ncols:
             conn.execute(f"ALTER TABLE notification ADD COLUMN {col} TEXT")
+    # 网申信息总汇：支持「文件(PDF/Word/图片) / 网络链接」类型
+    nacols = {r[1] for r in conn.execute("PRAGMA table_info(net_apply_info)")}
+    for col, typ in (("kind", "TEXT DEFAULT 'text'"), ("file_path", "TEXT"),
+                     ("file_name", "TEXT"), ("file_ext", "TEXT"), ("link_url", "TEXT")):
+        if col not in nacols:
+            conn.execute(f"ALTER TABLE net_apply_info ADD COLUMN {col} {typ}")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_notification_event_key ON notification(event_key)")
     acols = {r[1] for r in conn.execute("PRAGMA table_info(award)")}
     if "count" not in acols:
@@ -598,6 +604,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     acols = {r[1] for r in conn.execute("PRAGMA table_info(application)")}
     if "resume_approved" not in acols:
         conn.execute("ALTER TABLE application ADD COLUMN resume_approved INTEGER NOT NULL DEFAULT 0")
+    # 精投中心「保留原岗位链接 + 来源链接」：加入精投时从 job 复制，避免 job 行被改/删除后丢失
+    if "source_url" not in acols:
+        conn.execute("ALTER TABLE application ADD COLUMN source_url TEXT")
+    if "job_url" not in acols:
+        conn.execute("ALTER TABLE application ADD COLUMN job_url TEXT")
     # 秋招状态（用户手动标记：进行中 / 未开始 / 未标记），用于岗位池一眼区分是否已开秋招
     if "fall_recruit" not in jcols:
         conn.execute("ALTER TABLE job ADD COLUMN fall_recruit TEXT NOT NULL DEFAULT ''")

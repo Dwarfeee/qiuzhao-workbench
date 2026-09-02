@@ -50,4 +50,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     relay('form-data', '/api/extension/form-data').then(sendResponse);
     return true;
   }
+  if (msg.type === 'fill-netapply') {
+    relay('fill-netapply', '/api/extension/fill-netapply', msg.payload).then(sendResponse);
+    return true;
+  }
+  if (msg.type === 'recommend-resume') {
+    relay('recommend-resume', '/api/extension/recommend-resume', msg.payload).then(sendResponse);
+    return true;
+  }
 });
