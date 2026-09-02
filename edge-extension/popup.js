@@ -14,7 +14,7 @@ function esc(s) {
 }
 function getActiveUrl() {
   return new Promise(resolve => {
-    chrome.tabs.query({ active: true, currentWindow: true }, t => resolve(t[0] ? t[0].url : ''));
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, t => resolve(t[0] ? t[0].url : ''));
   });
 }
 function callApi(type, payload) {
@@ -64,7 +64,7 @@ function clearDraft() { chrome.storage.local.remove(DRAFT_KEY); }
 document.getElementById('capture').addEventListener('click', async () => {
   setStatus('正在读取当前页…');
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     const res = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractPage, args: [SITE_EXTRACT_RULES] });
     const info = res && res[0] ? res[0].result : null;
     if (res && res[0] && res[0].error) { console.error('extractPage error:', res[0].error); }
@@ -189,7 +189,7 @@ document.getElementById('fill-go').addEventListener('click', async () => {
   const sel = document.getElementById('f-company');
   const fields = JSON.parse(sel.dataset.fields || '[]');
   const personal = JSON.parse(sel.dataset.personal || '{}');
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   setStatus('正在填充…');
 
   const sendFill = (extra) => new Promise(resolve => {

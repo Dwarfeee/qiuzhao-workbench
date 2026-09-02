@@ -1,19 +1,15 @@
 /* 秋招工作台助手 · 后台 Service Worker（中转 API 调用，绕过扩展页 CORS） */
 const API = 'http://127.0.0.1:8787';
 
-/* 点击图标 → 打开常驻侧边栏（不会因切标签页而消失，需手动点 × 关闭） */
-if (chrome.sidePanel && chrome.sidePanel.open) {
-  // 支持的 Edge：让「点击图标」自动打开侧边栏
-  if (chrome.sidePanel.setPanelBehavior) {
-    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
-  }
-  // 兜底：若 setPanelBehavior 未生效（老 API），用用户点击手势手动打开
-  chrome.action.onClicked.addListener(() => {
-    chrome.windows.getCurrent(w => {
-      if (w && w.id != null) chrome.sidePanel.open({ windowId: w.id }).catch(() => {});
-    });
+/* 点击图标 → 打开独立小窗（失焦不关、手动×关；兼容不支持侧边栏的 Edge） */
+chrome.action.onClicked.addListener(() => {
+  const target = chrome.runtime.getURL('popup.html');
+  chrome.windows.getAll(wins => {
+    const ex = (wins || []).find(w => w.type === 'popup' && w.url && w.url.indexOf(target) !== -1);
+    if (ex) { chrome.windows.update(ex.id, { focused: true }); return; }
+    chrome.windows.create({ url: target, type: 'popup', width: 392, height: 680 });
   });
-}
+});
 
 function relay(type, path, payload) {
   return new Promise(resolve => {
