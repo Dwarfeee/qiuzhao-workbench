@@ -422,16 +422,3 @@ function guessJob(info) {
   if (el) el.addEventListener('input', saveDraft);
 });
 loadDraft();
-
-/* 若浏览器支持侧边栏，显示「固定到侧边栏」按钮（点击后常驻，切网页不消失） */
-if (chrome.sidePanel && chrome.sidePanel.open) {
-  const pb = document.getElementById('open-panel');
-  if (pb) {
-    pb.style.display = 'block';
-    pb.addEventListener('click', () => {
-      chrome.windows.getCurrent(w => {
-        if (w && w.id != null) chrome.sidePanel.open({ windowId: w.id }).catch(() => {});
-      });
-    });
-  }
-}
