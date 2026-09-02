@@ -109,6 +109,17 @@ CREATE TABLE IF NOT EXISTS personal_info (
     updated_at TEXT DEFAULT (datetime('now','localtime'))
 );
 
+CREATE TABLE IF NOT EXISTS net_apply_info (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT,                       -- 分组：基本信息 / 教育 / 其他
+    label TEXT NOT NULL,                 -- 字段名，如 姓名 / 邮箱 / 政治面貌
+    value TEXT,
+    hint TEXT,                           -- 占位提示 / 备注
+    order_no INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+
 CREATE TABLE IF NOT EXISTS master_resume (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     version TEXT NOT NULL,
@@ -590,6 +601,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 秋招状态（用户手动标记：进行中 / 未开始 / 未标记），用于岗位池一眼区分是否已开秋招
     if "fall_recruit" not in jcols:
         conn.execute("ALTER TABLE job ADD COLUMN fall_recruit TEXT NOT NULL DEFAULT ''")
+    # 个人真名（网申/简历命名用）：缺省填 贺宣锦
+    conn.execute("INSERT OR IGNORE INTO personal_info (id) VALUES (1)")
+    pname = conn.execute("SELECT name FROM personal_info WHERE id=1").fetchone()
+    if not pname or not pname["name"]:
+        conn.execute("UPDATE personal_info SET name='贺宣锦' WHERE id=1")
 
 
 def get_setting(key: str, default=None):

@@ -41,8 +41,8 @@ $('#nav').addEventListener('click', e => {
 function loadPage(p) {
   ({ dashboard: renderDashboard, jobs: renderJobs, precision: renderPrecision,
      applications: renderApplications, interviews: renderInterviews, sources: renderSources,
-     analytics: renderAnalytics, kb: renderKb, resume: renderResume, review: renderReview,
-     notify: renderNotify, settings: renderSettings }[p] || (() => {}))();
+     analytics: renderAnalytics, kb: renderKb, resume: renderResume, netapply: renderNetApply,
+     review: renderReview, notify: renderNotify, settings: renderSettings }[p] || (() => {}))();
 }
 
 /* ---------------- Modal ---------------- */
@@ -1358,3 +1358,94 @@ async function maybeShowReadinessPopup() {
     };
   } catch (e) { /* 弹窗失败不影响主流程 */ }
 }
+
+/* ================= 网申信息总汇 ================= */
+async function renderNetApply() {
+  let rows = [];
+  try { rows = await api('/api/netapply'); } catch (e) { rows = []; }
+  const sel = document.getElementById('netapply-cat-filter');
+  const cats = [...new Set(rows.map(r => r.category || '基本信息'))];
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">全部分组</option>' + cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    sel.value = cur;
+  }
+  const list = document.getElementById('netapply-list');
+  if (!list) return;
+  const filt = sel ? sel.value : '';
+  const shown = filt ? rows.filter(r => (r.category || '基本信息') === filt) : rows;
+  if (!shown.length) {
+    list.innerHTML = '<div class="empty">还没有任何网申信息，点「+ 添加字段」录入（如 姓名 / 邮箱 / 手机 / 政治面貌 / 英语等级…）</div>';
+    return;
+  }
+  const groups = {};
+  shown.forEach(r => { (groups[r.category || '基本信息'] || (groups[r.category || '基本信息'] = [])).push(r); });
+  list.innerHTML = Object.entries(groups).map(([cat, items]) =>
+    `<div class="card" style="margin-bottom:12px"><h3>${esc(cat)} <span class="muted" style="font-weight:400">(${items.length})</span></h3>
+      <table class="tbl"><tbody>
+      ${items.map(r => `<tr>
+        <td style="width:28%"><b>${esc(r.label)}</b></td>
+        <td>${esc(r.value) || '<span class="muted">（空）</span>'}${r.hint ? ` <span class="muted">· ${esc(r.hint)}</span>` : ''}</td>
+        <td style="width:130px;text-align:right;white-space:nowrap">
+          <button class="btn sm" onclick="editNetapply(${r.id})">编辑</button>
+          <button class="btn sm danger" onclick="delNetapply(${r.id})">删除</button>
+        </td></tr>`).join('')}
+      </tbody></table></div>`).join('');
+}
+
+function netapplyForm(id) {
+  const title = id ? `编辑字段 #${id}` : '添加网申字段';
+  openModal(`<h3>${title}</h3>
+    <div class="form-col">
+      <label>分组</label><input id="na-cat" class="input" placeholder="如 基本信息 / 教育 / 其他">
+      <label>字段名</label><input id="na-label" class="input" placeholder="如 姓名 / 邮箱 / 政治面貌">
+      <label>值</label><input id="na-value" class="input" placeholder="填写内容">
+      <label>备注 / 提示</label><input id="na-hint" class="input" placeholder="可选">
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn primary" id="na-save">保存</button>
+    </div>`);
+  if (id) {
+    api('/api/netapply').then(rows => {
+      const r = rows.find(x => x.id === id);
+      if (r) {
+        document.getElementById('na-cat').value = r.category || '';
+        document.getElementById('na-label').value = r.label || '';
+        document.getElementById('na-value').value = r.value || '';
+        document.getElementById('na-hint').value = r.hint || '';
+      }
+    }).catch(() => {});
+  }
+  document.getElementById('na-save').onclick = async () => {
+    const body = {
+      category: document.getElementById('na-cat').value.trim() || '基本信息',
+      label: document.getElementById('na-label').value.trim(),
+      value: document.getElementById('na-value').value,
+      hint: document.getElementById('na-hint').value
+    };
+    if (!body.label) { toast('字段名必填', true); return; }
+    try {
+      if (id) await api(`/api/netapply/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+      else await api('/api/netapply', { method: 'POST', body: JSON.stringify(body) });
+      closeModal(); toast('已保存'); renderNetApply();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+function editNetapply(id) { netapplyForm(id); }
+
+async function delNetapply(id) {
+  if (!confirm('确定删除该字段？')) return;
+  try { await api(`/api/netapply/${id}`, { method: 'DELETE' }); toast('已删除'); renderNetApply(); }
+  catch (e) { toast(e.message, true); }
+}
+
+(function wireNetapply() {
+  if (window.__netapplyWired) return;
+  window.__netapplyWired = true;
+  const add = document.getElementById('btn-add-netapply');
+  if (add) add.addEventListener('click', () => netapplyForm());
+  const f = document.getElementById('netapply-cat-filter');
+  if (f) f.addEventListener('change', renderNetApply);
+})();

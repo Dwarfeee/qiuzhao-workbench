@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app">
+    <h2>秋招工作台助手</h2>
+
+    <button id="capture" class="big">📸 捕捉当前页岗位</button>
+    <div id="cap-form" class="box" style="display:none">
+      <label>公司 *</label><input id="c-company" placeholder="如 腾讯">
+      <label>岗位 *</label><input id="c-title" placeholder="如 产品经理">
+      <label>地点</label><input id="c-loc" placeholder="如 深圳">
+      <label>来源</label><input id="c-source" placeholder="如 BOSS直聘 / 牛客 / 官网">
+      <label>JD（可选）</label><textarea id="c-jd" rows="5" placeholder="自动抓取，可修改"></textarea>
+      <button id="cap-save" class="primary">加入岗位池</button>
+    </div>
+
+    <hr>
+
+    <button id="fill" class="big">📝 填网申</button>
+    <div id="fill-box" class="box" style="display:none">
+      <label>选择企业（确认上下文）</label>
+      <select id="f-company"></select>
+      <button id="fill-go" class="primary">填充当前页表单</button>
+      <div id="fill-status" class="muted"></div>
+    </div>
+
+    <div id="status" class="muted"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

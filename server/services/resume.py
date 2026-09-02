@@ -811,6 +811,19 @@ def ensure_master_pdf(mid: str) -> Path:
     return pdf
 
 
+def _person_name() -> str:
+    """网申/简历命名用的个人真名；缺省 贺宣锦。"""
+    try:
+        conn = connect()
+        try:
+            r = conn.execute("SELECT name FROM personal_info WHERE id=1").fetchone()
+            return (r["name"] if r and r["name"] else "贺宣锦")
+        finally:
+            conn.close()
+    except Exception:
+        return "贺宣锦"
+
+
 def create_tailored_version(job_id: int, self_eval_items: list[dict],
                             highlight_items: list[dict], reason: str = "") -> dict:
     """Master → Tailored：独立版本目录 + 只改两个区域 + Diff + PDF + 验证。
@@ -840,17 +853,20 @@ def create_tailored_version(job_id: int, self_eval_items: list[dict],
     diff = diff_html(master_html, tailored)
 
     # 3) 建版本目录（完整运行环境：html + photo + qr）
-    slug = re.sub(r"[^\w\u4e00-\u9fff]+", "_", f"{company}_{position}")[:60].strip("_") or f"job{job_id}"
-    vdir = config.VERSIONS_DIR / f"{job_id}_{slug}"
+    # 文件命名格式：贺宣锦-公司名称-岗位名称（个人真名取自 personal_info，缺省贺宣锦）
+    pname = _person_name()
+    safe = lambda s: re.sub(r'[\\/*?:<>"|]', '_', str(s)).strip().strip('_') or "x"
+    file_base = f"{safe(pname)}-{safe(company)}-{safe(position)}"[:90]
+    vdir = config.VERSIONS_DIR / f"{job_id}_{file_base}"
     vdir.mkdir(parents=True, exist_ok=True)
-    html_path = vdir / "resume.html"
+    html_path = vdir / f"{file_base}.html"
     html_path.write_text(tailored, encoding="utf-8")
     for name in ("photo.jpg", "qr.png"):
         f = config.MASTER_SOURCE_DIR / name
         if f.exists():
             shutil.copy2(f, vdir / name)
 
-    pdf_path = vdir / "resume.pdf"
+    pdf_path = vdir / f"{file_base}.pdf"
     render_ok, pdf_check = False, None
     if diff["status"] == "pass":
         # 4) 渲染 PDF

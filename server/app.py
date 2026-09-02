@@ -35,6 +35,18 @@ init_db()
 
 app = FastAPI(title="秋招 OS", version="1.0")
 
+# Edge 扩展（MV3）从浏览器页面向本地服务发请求需要 CORS。
+# 这是个人本地私有服务，放开 origins/methods/headers（不携带凭据）。
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # ================================================================ 资料库 KB
 
@@ -267,6 +279,105 @@ def add_job_api(payload: dict):
     return fit.add_job(**{k: payload.get(k, "") for k in
                           ("company", "title", "location", "url", "source", "jd_text",
                            "publish_date", "deadline", "source_url", "job_type")})
+
+
+# ================================================================ 网申信息总汇（可增删的复用字段）
+@app.get("/api/netapply")
+def list_netapply(category: str = ""):
+    conn = connect()
+    try:
+        if category:
+            rows = conn.execute(
+                "SELECT * FROM net_apply_info WHERE category=? ORDER BY order_no, id",
+                (category,)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM net_apply_info ORDER BY order_no, id").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@app.post("/api/netapply")
+def add_netapply(payload: dict):
+    category = (payload.get("category") or "基本信息").strip()
+    label = (payload.get("label") or "").strip()
+    if not label:
+        raise HTTPException(400, "label 必填")
+    conn = connect()
+    try:
+        cur = conn.execute(
+            "INSERT INTO net_apply_info (category, label, value, hint, order_no, created_at, updated_at) "
+            "VALUES (?,?,?,?,?, datetime('now','localtime'), datetime('now','localtime'))",
+            (category, label, payload.get("value", "") or "", payload.get("hint", "") or "",
+             int(payload.get("order_no", 0) or 0)))
+        conn.commit()
+        return {"id": cur.lastrowid, "ok": True}
+    finally:
+        conn.close()
+
+
+@app.patch("/api/netapply/{nid}")
+def update_netapply(nid: int, payload: dict):
+    conn = connect()
+    try:
+        fields, vals = [], []
+        for col in ("category", "label", "value", "hint", "order_no"):
+            if col in payload:
+                fields.append(f"{col}=?")
+                vals.append(payload[col])
+        if not fields:
+            return {"ok": True}
+        vals.append(nid)
+        conn.execute(
+            f"UPDATE net_apply_info SET {','.join(fields)}, updated_at=datetime('now','localtime') "
+            f"WHERE id=?", vals)
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/netapply/{nid}")
+def delete_netapply(nid: int):
+    conn = connect()
+    try:
+        conn.execute("DELETE FROM net_apply_info WHERE id=?", (nid,))
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+# ================================================================ Edge 扩展接口（捕捉→岗位池 / 填表取数）
+@app.get("/api/extension/form-data")
+def extension_form_data():
+    """返回自动填表所需的：个人基本信息(personal_info) + 网申字段列表 + 可选公司列表。"""
+    conn = connect()
+    try:
+        p = conn.execute("SELECT * FROM personal_info WHERE id=1").fetchone()
+        personal = dict(p) if p else {}
+        rows = conn.execute(
+            "SELECT * FROM net_apply_info ORDER BY order_no, id").fetchall()
+        fields = [dict(r) for r in rows]
+        comps = [r[0] for r in conn.execute(
+            "SELECT DISTINCT company FROM job WHERE company IS NOT NULL AND company<>'' "
+            "ORDER BY company").fetchall()]
+        return {"personal": personal, "fields": fields, "companies": comps}
+    finally:
+        conn.close()
+
+
+@app.post("/api/extension/capture")
+def extension_capture(payload: dict):
+    """Edge 扩展「一键捕捉」：把网页提取的岗位信息加入岗位池。company/title 必填。"""
+    if not payload.get("company") or not payload.get("title"):
+        raise HTTPException(400, "company 与 title 必填")
+    data = {k: payload.get(k, "") for k in
+            ("company", "title", "location", "url", "jd_text",
+             "publish_date", "deadline", "source_url", "job_type")}
+    data["source"] = payload.get("source") or "Edge捕捉"
+    return fit.add_job(**data)
 
 
 @app.post("/api/jobs/{job_id}/analyze")
