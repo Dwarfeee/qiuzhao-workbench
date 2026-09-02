@@ -116,6 +116,12 @@ CREATE TABLE IF NOT EXISTS net_apply_info (
     value TEXT,
     hint TEXT,                           -- 占位提示 / 备注
     order_no INTEGER DEFAULT 0,
+    kind TEXT DEFAULT 'text',            -- text / file / link
+    file_path TEXT,
+    file_name TEXT,
+    file_ext TEXT,
+    link_url TEXT,
+    extracted_text TEXT,                 -- 文件/链接的内容文本，供 LLM 检索
     created_at TEXT DEFAULT (datetime('now','localtime')),
     updated_at TEXT DEFAULT (datetime('now','localtime'))
 );
@@ -574,7 +580,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 网申信息总汇：支持「文件(PDF/Word/图片) / 网络链接」类型
     nacols = {r[1] for r in conn.execute("PRAGMA table_info(net_apply_info)")}
     for col, typ in (("kind", "TEXT DEFAULT 'text'"), ("file_path", "TEXT"),
-                     ("file_name", "TEXT"), ("file_ext", "TEXT"), ("link_url", "TEXT")):
+                     ("file_name", "TEXT"), ("file_ext", "TEXT"), ("link_url", "TEXT"),
+                     ("extracted_text", "TEXT")):
         if col not in nacols:
             conn.execute(f"ALTER TABLE net_apply_info ADD COLUMN {col} {typ}")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_notification_event_key ON notification(event_key)")

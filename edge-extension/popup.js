@@ -230,7 +230,13 @@ document.getElementById('fill-go').addEventListener('click', async () => {
   const sel = document.getElementById('f-company');
   const fields = JSON.parse(sel.dataset.fields || '[]');
   const personal = JSON.parse(sel.dataset.personal || '{}');
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+
+  // 独立小窗模式下，当前 active tab 是小窗自己；必须用后台记录的「点击扩展图标时的目标页」
+  let tab = await getStoredTargetTab();
+  if (!tab) {
+    const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    tab = tabs[0];
+  }
   if (!tab) { setStatus('填充失败：未找到当前标签页', true); return; }
   if (tab.url && tab.url.startsWith(chrome.runtime.getURL(''))) {
     setStatus('填充失败：请先在网申页面点「填充当前页表单」', true); return;

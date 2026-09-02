@@ -1423,8 +1423,12 @@ async function renderNetApply() {
         if (kind === 'file') {
           const ext = (r.file_ext || '').toUpperCase();
           const icon = /pdf/i.test(ext) ? '📕' : /doc/i.test(ext) ? '📘' : /png|jpe?g|gif|webp/i.test(ext) ? '🖼' : '📎';
+          const hasText = r.extracted_text && r.extracted_text.trim();
+          const extractInfo = hasText
+            ? `<span class="ok" title="LLM 已识别 ${r.extracted_text.length} 字">🧠 已识别 ${r.extracted_text.length} 字（LLM整理）</span>`
+            : `<span class="muted">未识别内容</span>`;
           valHtml = r.file_path
-            ? `<a href="/api/netapply/${r.id}/file" target="_blank" title="打开/下载附件">${icon} ${esc(r.file_name || r.value || '附件')}</a>`
+            ? `<div>${icon} <a href="/api/netapply/${r.id}/file" target="_blank" title="打开/下载附件">${esc(r.file_name || r.value || '附件')}</a> · ${extractInfo} <button class="btn sm" onclick="extractNetapply(${r.id})">🧠 LLM 重新识别</button></div>`
             : '<span class="muted">（附件缺失）</span>';
         } else if (kind === 'link') {
           const u = r.link_url || r.value || '';
@@ -1460,9 +1464,9 @@ function netapplyForm(id) {
       <div id="na-file-wrap" style="display:none">
         <label>附件</label>
         <input type="file" id="na-file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" class="input">
-        <button class="btn sm" id="na-upload" type="button" style="margin:6px 0">⬆ 上传附件</button>
+        <button class="btn sm" id="na-upload" type="button" style="margin:6px 0">🧠 上传附件并由 LLM 识别内容</button>
         <div id="na-file-info" class="muted"></div>
-        <input type="hidden" id="na-file-path"><input type="hidden" id="na-file-name"><input type="hidden" id="na-file-ext">
+        <input type="hidden" id="na-file-path"><input type="hidden" id="na-file-name"><input type="hidden" id="na-file-ext"><input type="hidden" id="na-extracted-text">
       </div>
       <div id="na-link-wrap" style="display:none"><label>链接 URL</label><input id="na-link" class="input" placeholder="https://..."></div>
       <label>备注 / 提示</label><input id="na-hint" class="input" placeholder="可选">
@@ -1493,8 +1497,11 @@ function netapplyForm(id) {
       document.getElementById('na-file-path').value = d.file_path;
       document.getElementById('na-file-name').value = d.file_name;
       document.getElementById('na-file-ext').value = d.file_ext;
+      document.getElementById('na-extracted-text').value = d.extracted_text || '';
       document.getElementById('na-value').value = d.file_name;
-      document.getElementById('na-file-info').textContent = '✓ 已上传：' + d.file_name;
+      const et = (d.extracted_text || '').trim();
+      document.getElementById('na-file-info').innerHTML = '✓ 已上传：' + esc(d.file_name) +
+        (et ? '<br><span class="ok">🧠 已识别 ' + et.length + ' 字（LLM整理）</span>' : '<br><span class="muted">未识别到可读取文本</span>');
     } catch (e) { toast('上传失败：' + e.message, true); }
   };
 
@@ -1512,7 +1519,10 @@ function netapplyForm(id) {
           document.getElementById('na-file-path').value = r.file_path || '';
           document.getElementById('na-file-name').value = r.file_name || '';
           document.getElementById('na-file-ext').value = r.file_ext || '';
-          document.getElementById('na-file-info').textContent = '当前附件：' + r.file_name;
+          document.getElementById('na-extracted-text').value = r.extracted_text || '';
+          const et = (r.extracted_text || '').trim();
+          document.getElementById('na-file-info').innerHTML = '当前附件：' + esc(r.file_name) +
+            (et ? '<br><span class="ok">🧠 已识别 ' + et.length + ' 字（LLM整理）</span>' : '<br><span class="muted">未识别到可读取文本</span>');
         }
       }
     }).catch(() => {});
@@ -1532,6 +1542,7 @@ function netapplyForm(id) {
       body.file_path = document.getElementById('na-file-path').value;
       body.file_name = document.getElementById('na-file-name').value;
       body.file_ext = document.getElementById('na-file-ext').value;
+      body.extracted_text = document.getElementById('na-extracted-text').value;
       body.value = document.getElementById('na-value').value;
       if (!body.file_path) { toast('请先上传附件', true); return; }
     } else {
@@ -1548,6 +1559,14 @@ function netapplyForm(id) {
 }
 
 function editNetapply(id) { netapplyForm(id); }
+
+window.extractNetapply = async function(id) {
+  try {
+    const r = await api(`/api/netapply/${id}/extract`, { method: 'POST' });
+    toast(r.ok ? `🧠 已识别 ${(r.extracted_text || '').length} 字（LLM整理）` : (r.message || '识别失败'), !r.ok);
+    renderNetApply();
+  } catch (e) { toast('识别失败：' + e.message, true); }
+}
 
 async function delNetapply(id) {
   if (!confirm('确定删除该字段？')) return;

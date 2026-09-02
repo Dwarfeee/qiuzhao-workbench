@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from server import config  # noqa: E402
 from server.db import connect, init_db  # noqa: E402
-from server.services import daily, fit, greeting, interview_brief, kb, llm, notifier, parser, radar, resume, review, analytics  # noqa: E402
+from server.services import daily, extract, fit, greeting, interview_brief, kb, llm, notifier, parser, radar, resume, review, analytics  # noqa: E402
 
 # 启动时执行幂等迁移（补新表/新列）
 init_db()
@@ -311,11 +311,12 @@ def add_netapply(payload: dict):
     try:
         cur = conn.execute(
             "INSERT INTO net_apply_info (category, label, value, hint, kind, file_path, file_name, "
-            "file_ext, link_url, order_no, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?, datetime('now','localtime'), datetime('now','localtime'))",
+            "file_ext, link_url, extracted_text, order_no, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?, datetime('now','localtime'), datetime('now','localtime'))",
             (category, label, payload.get("value", "") or "", payload.get("hint", "") or "", kind,
              payload.get("file_path") or "", payload.get("file_name") or "",
              payload.get("file_ext") or "", payload.get("link_url") or "",
+             payload.get("extracted_text") or "",
              int(payload.get("order_no", 0) or 0)))
         conn.commit()
         return {"id": cur.lastrowid, "ok": True}
@@ -329,7 +330,7 @@ def update_netapply(nid: int, payload: dict):
     try:
         fields, vals = []
         for col in ("category", "label", "value", "hint", "order_no", "kind",
-                    "file_path", "file_name", "file_ext", "link_url"):
+                    "file_path", "file_name", "file_ext", "link_url", "extracted_text"):
             if col in payload:
                 fields.append(f"{col}=?")
                 vals.append(payload[col])
@@ -374,6 +375,35 @@ _NETAPPLY_EXTS = {
 }
 
 
+def _llm_refine_doc(raw_text: str, file_name: str = "") -> str:
+    """用 LLM 把从文档提取的原文整理为清晰、结构化、可识别的纯文本（只在配置了 LLM 时启用）。
+
+    这是用户「在工作台网申信息汇总界面调用 LLM 扫描文档内容成可识别文本」诉求的实现：
+    原始提取可能含换行错乱/乱码/排版噪声，经 LLM 整理后更易被填表/ATS 端点作为事实依据读取。
+    未配置 LLM 或提取本身失败时，原样返回，保证功能不降级。
+    """
+    from server.services import llm
+    if not raw_text or not llm.is_configured():
+        return raw_text
+    if raw_text.startswith("[") and "提取失败" in raw_text:
+        return raw_text
+    if "暂不支持 OCR" in raw_text:
+        return raw_text
+    try:
+        system = (
+            "你是文档识别与整理助手。下面是从用户上传的 Word/PDF/TXT 文档中提取的原文，"
+            "可能含有换行错乱、乱码、多余空格、扫描噪声或排版碎片。请在不编造任何信息的前提下，"
+            "将其整理为清晰、结构化、便于机器后续读取与匹配的纯文本：保留全部事实信息，"
+            "按原文档的章节/要点合理分段，去除明显乱码与无意义空白。"
+            "只返回整理后的文本本身，不要任何解释，也不要用 markdown 代码块包裹。"
+        )
+        user = f"文件名：{file_name}\n\n提取原文：\n{raw_text[:6000]}"
+        out = llm.chat(system, user, json_mode=False, temperature=0, timeout=60)
+        return out.strip() if out and out.strip() else raw_text
+    except Exception:  # noqa: BLE001
+        return raw_text
+
+
 @app.post("/api/netapply/upload")
 async def netapply_upload(file: UploadFile = File(...)):
     import re
@@ -391,7 +421,10 @@ async def netapply_upload(file: UploadFile = File(...)):
         i += 1
     data = await file.read()
     dst.write_bytes(data)
-    return {"ok": True, "file_path": str(dst), "file_name": raw, "file_ext": ext.lstrip('.')}
+    extracted = extract.extract_text(str(dst))
+    extracted = _llm_refine_doc(extracted, raw)
+    return {"ok": True, "file_path": str(dst), "file_name": raw, "file_ext": ext.lstrip('.'),
+            "extracted_text": extracted}
 
 
 @app.get("/api/netapply/{nid}/file")
@@ -408,6 +441,25 @@ def netapply_file(nid: int):
         raise HTTPException(404, "附件文件不存在（可能已被移动）")
     media = _NETAPPLY_EXTS.get(p.suffix.lower(), "application/octet-stream")
     return FileResponse(p, media_type=media, filename=row["file_name"] or p.name)
+
+
+@app.post("/api/netapply/{nid}/extract")
+def netapply_extract(nid: int):
+    """对已有文件字段重新提取/更新 extracted_text。"""
+    conn = connect()
+    try:
+        row = conn.execute("SELECT file_path, kind, file_name FROM net_apply_info WHERE id=?", (nid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "字段不存在")
+        if row["kind"] != "file" or not row["file_path"]:
+            return {"ok": True, "extracted_text": "", "message": "非文件类型或没有附件"}
+        text = extract.extract_text(row["file_path"])
+        text = _llm_refine_doc(text, row.get("file_name") or "")
+        conn.execute("UPDATE net_apply_info SET extracted_text=? WHERE id=?", (text, nid))
+        conn.commit()
+        return {"ok": True, "extracted_text": text}
+    finally:
+        conn.close()
 
 
 # ================================================================ Edge 扩展接口（捕捉→岗位池 / 填表取数）
@@ -564,13 +616,14 @@ def extension_smart_fill_map(payload: dict):
 
 
 def _gather_netapply_entries():
-    """汇总「网申信息总汇 + 个人基本信息」，返回可填值条目列表（供语义填表 / ATS 优化复用）。"""
+    """汇总「网申信息总汇 + 个人基本信息」，返回可填值条目列表（供语义填表 / ATS 优化复用）。
+    对文件类型的字段，会读取/提取其文本内容作为 value。"""
     conn = connect()
     try:
         p = conn.execute("SELECT * FROM personal_info WHERE id=1").fetchone()
         personal = dict(p) if p else {}
         rows = conn.execute(
-            "SELECT category, label, value, kind, link_url FROM net_apply_info "
+            "SELECT category, label, value, kind, link_url, file_path, extracted_text FROM net_apply_info "
             "ORDER BY order_no, id").fetchall()
         fields = [dict(r) for r in rows]
     finally:
@@ -586,10 +639,37 @@ def _gather_netapply_entries():
         if v:
             entries.append({"label": k, "value": str(v).strip()})
     for f in fields:
-        v = (f["link_url"] or f["value"]) if f["kind"] == "link" else f["value"]
+        if f["kind"] == "link":
+            v = f["link_url"] or f["value"]
+        elif f["kind"] == "file":
+            # 优先用已提取的文本；没有就现场提取
+            v = f["extracted_text"] or ""
+            if not v and f["file_path"]:
+                v = extract.extract_text(f["file_path"])
+        else:
+            v = f["value"]
         if v and str(v).strip():
             entries.append({"label": f["label"], "value": str(v).strip(), "group": f["category"] or ""})
     return entries
+
+
+def _resume_text_for_company(company: str):
+    """按公司名从简历中心取最新通过的定制简历 PDF，并提取文本（供填表/ATS 做事实依据）。"""
+    if not company:
+        return ""
+    conn = connect()
+    try:
+        row = conn.execute(
+        "SELECT rv.pdf_path FROM resume_version rv "
+        "JOIN master_resume mr ON mr.id=rv.master_resume_id "
+        "WHERE rv.company LIKE ? AND rv.pdf_path IS NOT NULL AND rv.pdf_path<>'' "
+            "AND (rv.diff_status IS NULL OR rv.diff_status='通过') "
+            "ORDER BY rv.updated_at DESC LIMIT 1", ("%" + company + "%",)).fetchone()
+        if not row or not row["pdf_path"]:
+            return ""
+        return extract.extract_text(row["pdf_path"])
+    finally:
+        conn.close()
 
 
 def _fetch_jd_for_company(company: str):
@@ -618,30 +698,35 @@ def extension_fill_netapply(payload: dict):
     from server.services import llm
 
     labels = payload.get("labels") or []
+    company = (payload.get("company") or "").strip()
     if not labels:
         return {"ok": True, "map": {}}
 
     entries = _gather_netapply_entries()
 
     if not entries:
-        return {"ok": False, "reason": "no-data", "message": "网申信息总汇为空，请先录入信息"}
+        return {"ok": False, "reason": "no-data", "message": "网申信息为空，请先录入信息"}
 
     if not llm.is_configured():
         return {"ok": False, "reason": "no-llm",
                 "message": "未配置 LLM（设置 → LLM 密钥管理），无法做语义匹配"}
 
+    # 若有文件/简历类字段，其 extracted_text 会出现在 entries 里；同时补充简历中心对应公司简历
+    resume_text = _resume_text_for_company(company) if company else ""
     entries_txt = "\n".join(f'- [{e.get("group", "")}] {e["label"]}：{e["value"]}' for e in entries)
     system = (
         "你是网申填表助手。任务：给定一组网页表单字段的显示名称（label/placeholder/aria-label），"
-        "从下方「用户网申信息总汇」里为每个字段挑出最匹配的值；若总汇里没有对应信息则映射到 null。\n"
+        "从下方「用户网申信息」里为每个字段挑出最匹配的值；若信息中没有对应内容则映射到 null。\n"
         "匹配规则：\n"
-        "1. 严格按语义匹配（如「毕业院校」匹配总汇里的院校字段，「政治面貌」匹配政治面貌字段）；\n"
-        "2. 总汇里的「链接/文件」类字段（作品集、个人主页等）只适合填到『作品集/个人主页/URL』类表单字段；\n"
-        "3. 只返回 JSON 对象 { \"表单字段名\": \"对应值或null\" }，不要任何解释或 markdown。"
+        "1. 严格按语义匹配（如「毕业院校」匹配院校字段，「政治面貌」匹配政治面貌字段）；\n"
+        "2. 「链接/文件」类字段（作品集、个人主页、简历等）只适合填到『作品集/个人主页/URL』类表单字段；\n"
+        "3. 简历中心对应公司的简历文本是事实补充，可用于回答「项目/实习/技能/自我评价」类字段，但不要编造未出现的内容；\n"
+        "4. 只返回 JSON 对象 { \"表单字段名\": \"对应值或null\" }，不要任何解释或 markdown。"
     )
     user = (
         f"# 用户网申信息总汇\n{entries_txt}\n\n"
-        f"# 需要填的表单字段\n" + "\n".join("- " + l for l in labels)
+        + (f"# 简历中心「{company}」定制简历原文\n{resume_text[:4000]}\n\n" if resume_text else "")
+        + f"# 需要填的表单字段\n" + "\n".join("- " + l for l in labels)
     )
     try:
         out = llm.chat(system, user, json_mode=True, temperature=0.1, timeout=90)
@@ -675,30 +760,34 @@ def extension_fill_ats(payload: dict):
 
     entries = _gather_netapply_entries()
     if not entries:
-        return {"ok": False, "reason": "no-data", "message": "网申信息总汇为空，请先录入信息"}
+        return {"ok": False, "reason": "no-data", "message": "网申信息为空，请先录入信息"}
 
     if not llm.is_configured():
         return {"ok": False, "reason": "no-llm",
                 "message": "未配置 LLM（设置 → LLM 密钥管理），无法做 ATS 优化"}
 
+    # 融合简历中心对应公司简历文本作为事实依据
+    resume_text = _resume_text_for_company(company) if company else ""
     entries_txt = "\n".join(f'- [{e.get("group", "")}] {e["label"]}：{e["value"]}' for e in entries)
     system = (
         "你是 ATS（Applicant Tracking System，申请人追踪系统）简历优化助手。企业用 ATS 对网申表单做关键词匹配与解析评分。"
-        "任务：根据用户已有的真实信息（网申信息总汇），为给定的网页表单字段，生成最易被 ATS 打高分的填写内容。\n"
+        "任务：根据用户已有的真实信息（网申信息总汇 + 对应公司简历），为给定的网页表单字段，生成最易被 ATS 打高分的填写内容。\n"
         "铁律与规则：\n"
         "1) 严格忠于用户真实信息，绝不可编造用户没有的经历、公司、技能、数据、证书。\n"
         "2) 以下「硬事实」字段必须原样返回，不得改写或润色：姓名、邮箱、电话/手机、身份证、出生年月、性别、"
         "毕业院校、专业、学历/学位、毕业时间、GPA/绩点、政治面貌、地址、英语等级(四六级)、期望城市。\n"
         "3) 对于「开放性叙述」字段（实习/工作/项目经历、自我评价、个人优势、技能总结、获奖、科研、社团活动、"
-        "求职意向等），在遵守第1条前提下，用 JD 中的关键词（岗位要求的技能/工具/能力/行业术语）重写，使其更易被 ATS 命中："
+        "求职意向等），在遵守第1条前提下，优先从「网申信息总汇」和「简历中心对应公司简历」中提取真实经历，"
+        "再用 JD 中的关键词（岗位要求的技能/工具/能力/行业术语）重写，使其更易被 ATS 命中："
         "动词开头、量化成果、使用标准术语；保持简洁（适合表单文本框，通常 ≤ 300 字）。\n"
         "4) 若某字段在用户真实信息中找不到任何对应内容，返回 null（不要编造）。\n"
         "5) 只返回 JSON 对象 { \"表单字段名\": \"填写内容或null\" }，不要任何解释或 markdown。"
     )
     user = (
         f"# 目标岗位 JD\n{jd or '（未提供 JD，按通用 ATS 最佳实践优化：动词开头、量化、关键词突出）'}\n\n"
-        f"# 用户真实信息（唯一信息来源，不得超出）\n{entries_txt}\n\n"
-        f"# 需要填的表单字段\n" + "\n".join("- " + l for l in labels)
+        f"# 用户网申信息总汇（含已提取的 PDF/Word 文件内容）\n{entries_txt}\n\n"
+        + (f"# 简历中心「{company}」定制简历原文\n{resume_text[:4000]}\n\n" if resume_text else "")
+        + f"# 需要填的表单字段\n" + "\n".join("- " + l for l in labels)
     )
     try:
         out = llm.chat(system, user, json_mode=True, temperature=0.3, timeout=120)
