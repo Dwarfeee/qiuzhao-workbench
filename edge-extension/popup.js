@@ -27,9 +27,10 @@ document.getElementById('capture').addEventListener('click', async () => {
   setStatus('正在读取当前页…');
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const res = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractPage });
+    const res = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractPage, args: [SITE_EXTRACT_RULES] });
     const info = res && res[0] ? res[0].result : null;
-    if (!info) { setStatus('无法读取页面', true); return; }
+    if (res && res[0] && res[0].error) { console.error('extractPage error:', res[0].error); }
+    if (!info) { setStatus('无法读取页面' + (res && res[0] && res[0].error ? '：' + res[0].error : ''), true); return; }
     if (!info.text || !info.text.trim()) { setStatus('页面无可读内容，请确认在岗位详情页', true); return; }
 
     // 优先用 DeepSeek 智能解析（已做站点感知提取，只含右侧详情面板）
@@ -183,7 +184,7 @@ const SITE_EXTRACT_RULES = {
                 prefer: '.jobs-details,.jobs-description,.description__content' }
 };
 
-function extractPage() {
+function extractPage(SITE_EXTRACT_RULES) {
   const title = document.title || '';
   const url = location.href;
   let host = '';
