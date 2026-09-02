@@ -126,31 +126,36 @@ function guessJob(info) {
   else if (/liepin/.test(host)) source = '猎聘';
   else if (/linkedin/.test(host)) source = 'LinkedIn';
 
-  let raw = (info.h1 || info.title || '').trim();
-  // 去掉标题尾巴的已知站点名（如 "-BOSS直聘"），避免污染公司识别
+  const raw = (info.h1 || info.title || '').trim();
+  // 去掉整串尾巴的已知站点名（如 "-BOSS直聘"），避免污染公司识别
   let cleaned = raw.replace(/(?:[-_｜|]\s*)?(BOSS直聘|Boss直聘|牛客网|牛客|拉勾网|拉勾|猎聘|LinkedIn|领英|智联招聘|前程无忧|51job|实习僧|海投网)\s*$/i, '').trim();
   if (!cleaned) cleaned = raw;
 
-  const segs = cleaned.split(/[|\-－_＿]/).map(s => s.trim()).filter(Boolean);
-  let company = '', title = cleaned;
+  // 切分：支持「-」「_」「｜」与空格（牛客/官网 h1 多为空格分隔）
+  const SITE_SET = new Set(SITE_NAMES.map(s => s.toLowerCase()));
+  const RECRUIT = /^(招聘|校招|社招|实习|内推)$/i; // 独立词段需剔除（如「校招」「招聘」）
+  let segs = cleaned.split(/[|\-－_＿\s]+/).map(s => s.trim()).filter(Boolean);
+  segs = segs.filter(s => !SITE_SET.has(s.toLowerCase()) && !RECRUIT.test(s));
+  segs = segs.map(s => s.replace(/(招聘|校招|社招)$/, '').trim()).filter(Boolean);
 
+  let company = '', title = cleaned;
   if (segs.length >= 2) {
-    const seg0Job = JOB_KW.test(segs[0]);
-    const seg1Job = JOB_KW.test(segs[1]);
+    const s0 = JOB_KW.test(segs[0]);
+    const s1 = JOB_KW.test(segs[1]);
     if (segs.length === 2) {
       // 「职位-公司」或「公司-职位」
-      if (seg0Job && !seg1Job) { title = segs[0]; company = segs[1]; }
-      else if (seg1Job && !seg0Job) { title = segs[1]; company = segs[0]; }
+      if (s0 && !s1) { title = segs[0]; company = segs[1]; }
+      else if (s1 && !s0) { title = segs[1]; company = segs[0]; }
       else { title = segs[0]; company = segs[1]; } // 默认按 BOSS 约定：职位-公司
     } else {
       // 3 段及以上：「职位-公司-城市」或「公司-职位-城市」
-      if (seg0Job) { title = segs[0]; company = segs[1]; }
-      else if (seg1Job) { title = segs[1]; company = segs[0]; }
+      if (s0) { title = segs[0]; company = segs[1]; }
+      else if (s1) { title = segs[1]; company = segs[0]; }
       else { title = segs[0]; company = segs[1]; }
     }
   }
-  // 守卫：公司绝不能是站点名
-  if (SITE_NAMES.includes(company)) company = '';
+  // 守卫：公司绝不能是站点名（兜底，独立词段已在上面过滤）
+  if (SITE_SET.has(company.toLowerCase())) company = '';
   // 收尾：剥掉公司/职位尾巴的「招聘」（如「腾讯招聘」→「腾讯」、「UI设计师招聘」→「UI设计师」）
   company = company.replace(/招聘$/, '');
   title = title.replace(/招聘$/, '');
