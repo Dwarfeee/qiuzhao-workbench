@@ -19,6 +19,8 @@ function toast(msg, err = false) {
 }
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+// 从 URL 取干净的主机名（去掉 www.），用于「来源」链接文字
+function hostOf(u) { const m = /https?:\/\/([^/?#]+)/i.exec(u || ''); return m ? m[1].replace(/^www\./i, '') : (u || ''); }
 
 const STATUS_LABELS = {
   'New': 'New', 'Shortlisted': '精投待处理', 'Tailoring': '定制中', 'Ready to Apply': '待投递',
@@ -333,7 +335,7 @@ function jobCard(j) {
     <div>${j.grade ? `<span class="badge b-${j.grade}">${j.grade} · ${j.fit_score}</span>` : '<span class="muted">未分析</span>'}
     ${bucket ? `<span class="badge ${bucket === 'A' ? 'b-S' : bucket === 'B' ? 'b-A' : bucket === 'C' ? 'b-B' : 'b-D'}" style="margin-left:4px">${bucket === 'A' ? '强匹配' : bucket === 'B' ? '较匹配' : bucket === 'C' ? '弱匹配' : '不匹配'}</span>` : ''}</div></div>
     <div class="jc-meta">
-      <span title="抓取来源网站（可点击追溯）">🌐 来源：${ j.source_url ? '<a href="'+esc(j.source_url)+'" target="_blank">'+esc(j.source || '未知')+'</a>' : '<b>'+esc(j.source || '手动添加')+'</b>' }</span>
+      <span title="抓取来源网站（可点击追溯）">🌐 来源：${ j.source_url ? '<a href="'+esc(j.source_url)+'" target="_blank" title="'+esc(j.source_url)+'">'+esc(hostOf(j.source_url))+'</a>' : '<b>'+esc(j.source || '手动添加')+'</b>' }${ j.source && j.source_url ? ' <span class="muted">· 来自 '+esc(j.source)+'</span>' : '' }</span>
       ${j.location ? ` · 📍 ${esc(j.location)}` : ''}
       ${j.job_type ? ` · ${esc(j.job_type)}` : ''}
       ${j.deadline ? ` · ⏰ 截止 <b>${esc(j.deadline)}</b>${deadlineHint(j.deadline, j.company_scale)}` : ' · ⏰ 截止 <span class=\"muted\">未标注</span>'}

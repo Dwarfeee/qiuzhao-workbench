@@ -8,7 +8,7 @@ echo  URL: http://127.0.0.1:8787
 echo  Keep this window open. Close it to stop.
 echo ===================================================
 echo.
-"C:\Users\19600\.workbuddy\binaries\python\envs\default\Scripts\python.exe" -m uvicorn server.app:app --host 127.0.0.1 --port 8787
+"C:\Users\19600\.workbuddy\binaries\python\envs\default\Scripts\python.exe" -m uvicorn server.app:app --host 127.0.0.1 --port 8787 --reload
 echo.
 echo Server stopped. Press any key to close.
 pause >nul

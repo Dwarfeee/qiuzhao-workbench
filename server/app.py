@@ -530,7 +530,7 @@ def _heuristic_pick(company: str, candidates: list):
 
 @app.post("/api/extension/find-company-site")
 def extension_find_company_site(payload: dict):
-    """Edge 扩展「来源网站」智能补全：用搜索引擎(默认 DuckDuckGo)全网检索公司官网，
+    """Edge 扩展「来源网站」智能补全：用搜索引擎(默认 Baidu → Bing → DuckDuckGo 兜底)全网检索公司官网，
     再让 LLM 从结果里挑出『带招聘入口的官方站』。
 
     入参：{ company }

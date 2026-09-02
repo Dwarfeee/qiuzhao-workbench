@@ -1,6 +1,10 @@
 /* 秋招工作台助手 · 弹出页 */
 const API = 'http://127.0.0.1:8787';
 
+// 跨事件保存：当前捕捉到的「来源平台」（如 BOSS直聘，仅追溯用）与「原页面 URL」
+let currentPlatform = '';
+let currentPageUrl = '';
+
 function setStatus(s, err) {
   const el = document.getElementById('status');
   if (el) { el.textContent = s; el.className = 'muted' + (err ? ' err' : ''); }
@@ -68,16 +72,21 @@ document.getElementById('capture').addEventListener('click', async () => {
       setStatus('已提取（启发式），请确认后加入岗位池（公司/岗位名必填）');
     }
 
-    // 公司名已知时，先联网检索其官方招聘站，再展示表单（避免手快保存时还是平台名）
+    // 「来源网站」存公司官网，绝不放平台名；平台名仅做追溯展示
+    currentPlatform = source || '';
+    currentPageUrl = tab.url || info.url || '';
+    let official = '';
+    // 公司名已知时，先联网检索其官方招聘站，再展示表单
     if (company && company.trim()) {
       setStatus('正在全网检索「' + company.trim() + '」的官方招聘网站…');
       try {
         const sr = await callApi('find-company-site', { company: company.trim() });
         if (sr.ok && sr.data && sr.data.ok && sr.data.url) {
-          source = sr.data.url;
-          setStatus('✓ 已定位官方站：' + sr.data.url + '（可手动修改后再保存）');
-        } else if (sr.ok && sr.data && sr.data.message) {
-          setStatus('官网检索未果（' + sr.data.message + '），已保留招聘平台名，请手动核对', true);
+          official = sr.data.url;
+          setStatus('✓ 已定位官方招聘站：' + official + '（可手动修改后再保存）');
+        } else {
+          const why = (sr.ok && sr.data && sr.data.message) ? '（' + sr.data.message + '）' : '';
+          setStatus('未能自动检索到官网' + why + '，请在「来源网站」手动粘贴官网地址后再保存', true);
         }
       } catch (e) { console.warn('find-company-site 失败：', e); }
     }
@@ -85,10 +94,12 @@ document.getElementById('capture').addEventListener('click', async () => {
     document.getElementById('c-company').value = company;
     document.getElementById('c-title').value = title;
     document.getElementById('c-loc').value = loc;
-    document.getElementById('c-source').value = source;
+    document.getElementById('c-source').value = official;   // 来源网站 = 公司官网（检索失败则为空，需手动填）
+    const plat = document.getElementById('c-platform');
+    if (plat) plat.textContent = currentPlatform ? '来源平台：' + currentPlatform + '（仅作追溯，不写入「来源网站」）' : '';
     document.getElementById('c-jd').value = (jd || '').slice(0, 3000);
     const show = document.getElementById('c-url-show');
-    if (show) show.textContent = '📎 可追溯链接：' + (tab.url || info.url || '');
+    if (show) show.textContent = '📎 可追溯链接：' + currentPageUrl;
     document.getElementById('cap-form').style.display = 'block';
   } catch (e) { setStatus('读取失败：' + e.message, true); }
 });
@@ -98,16 +109,15 @@ document.getElementById('cap-save').addEventListener('click', async () => {
   const title = document.getElementById('c-title').value.trim();
   if (!company || !title) { setStatus('招聘公司和岗位名必填', true); return; }
   if (SITE_NAMES.includes(company)) { setStatus('「' + company + '」是网站名，请填招人的公司', true); return; }
-  const pageUrl = await getActiveUrl();
   const srcVal = document.getElementById('c-source').value.trim();
-  const isSiteUrl = /^https?:\/\//i.test(srcVal);  // 官网检索成功时为 URL，否则是招聘平台名
+  const isSiteUrl = /^https?:\/\//i.test(srcVal);  // 官网检索成功时为 URL，否则为空
   const payload = {
     company,
     title,
     location: document.getElementById('c-loc').value.trim(),
-    source: srcVal,
-    url: pageUrl,
-    source_url: isSiteUrl ? srcVal : pageUrl,  // 官方站则来源链接指向官网，否则指向原岗位页
+    source: currentPlatform || 'Edge捕捉',  // 来源平台名（追溯用），永不是官网 URL
+    url: currentPageUrl,
+    source_url: isSiteUrl ? srcVal : currentPageUrl,  // 官方站则来源链接指向官网，否则指向原岗位页
     jd_text: document.getElementById('c-jd').value.trim()
   };
   setStatus('正在加入岗位池…');
