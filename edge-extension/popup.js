@@ -170,18 +170,18 @@ document.getElementById('fill-go').addEventListener('click', async () => {
 // 各站点规则：ignore=要剔除的侧边栏/列表；prefer=优先抓取的主内容容器。
 // 目的是「只抓你点开的右侧详情面板」，绝不被左侧岗位列表污染。
 const SITE_EXTRACT_RULES = {
-  'zhipin':  { ignore: '.job-list,.job-card-wrapper,.rec-job-list,.job-menu,.container-left',
-               prefer: '.job-detail,#main .job-primary,.job-sec' },
-  'boss':    { ignore: '.job-list,.job-card-wrapper,.rec-job-list,.job-menu,.container-left',
-               prefer: '.job-detail,#main .job-primary,.job-sec' },
-  'nowcoder': { ignore: '.sidebar,.job-list,.rec-list,.company-job-list,.post-aside',
-                prefer: '.position-info,.job-detail-box,.post-detail,.job-detail' },
-  'lagou':   { ignore: '.job-list,.sidebar,.company-job-list',
-               prefer: '.job-detail,.position-info,.job-intro' },
-  'liepin':  { ignore: '.sidebar,.job-list,.job-menu',
-               prefer: '.job-detail,.about-position,.job-item-main' },
-  'linkedin': { ignore: '.scaffold-layout__aside,.jobs-search-results-list',
-                prefer: '.jobs-details,.jobs-description,.description__content' }
+  'zhipin':  { ignore: '.job-list,.job-card-wrapper,.rec-job-list,.job-menu,.container-left,.sidebar,.job-search-list,.search-job-list,.job-card-left,.left-list',
+               prefer: '.job-detail,#main .job-primary,.job-sec,.job-sec-text,.job-description,.detail-content,.position-detail,[class*="job-detail"],[class*="position-detail"],[class*="job-desc"]' },
+  'boss':    { ignore: '.job-list,.job-card-wrapper,.rec-job-list,.job-menu,.container-left,.sidebar,.job-search-list,.search-job-list,.job-card-left,.left-list',
+               prefer: '.job-detail,#main .job-primary,.job-sec,.job-sec-text,.job-description,.detail-content,.position-detail,[class*="job-detail"],[class*="position-detail"],[class*="job-desc"]' },
+  'nowcoder': { ignore: '.sidebar,.job-list,.rec-list,.company-job-list,.post-aside,.left-side,.right-aside',
+                prefer: '.position-info,.job-detail-box,.post-detail,.job-detail,.job-description,.detail-content,[class*="job-detail"],[class*="position-detail"]' },
+  'lagou':   { ignore: '.job-list,.sidebar,.company-job-list,.left-aside,.position-list',
+               prefer: '.job-detail,.position-info,.job-intro,.job-description,.detail-content,[class*="job-detail"],[class*="position-detail"]' },
+  'liepin':  { ignore: '.sidebar,.job-list,.job-menu,.left-side,.search-job-list',
+               prefer: '.job-detail,.about-position,.job-item-main,.job-description,.detail-content,[class*="job-detail"],[class*="position-detail"]' },
+  'linkedin': { ignore: '.scaffold-layout__aside,.jobs-search-results-list,.left-rail',
+                prefer: '.jobs-details,.jobs-description,.description__content,.job-details,[class*="job-details"]' }
 };
 
 function extractPage(SITE_EXTRACT_RULES) {
@@ -195,6 +195,23 @@ function extractPage(SITE_EXTRACT_RULES) {
     if (host.includes(k)) { ignoreSel = SITE_EXTRACT_RULES[k].ignore; preferSel = SITE_EXTRACT_RULES[k].prefer; break; }
   }
 
+  const JD_HEADINGS = /职位描述|岗位职责|工作职责|岗位要求|任职要求|job description|responsibilities|requirements/i;
+  const GENERIC_HEADING = /^(职位描述|岗位职责|工作职责|岗位要求|任职要求|公司介绍|关于我们|职位信息|job description|responsibilities|requirements|公司福利|工作地址)$/i;
+
+  // 清理节点：去掉 script/style/noscript 等不会展示给用户的标签后再取文本
+  function cleanText(el) {
+    if (!el) return '';
+    const clone = el.cloneNode(true);
+    clone.querySelectorAll('script,style,noscript,svg,canvas,template,iframe').forEach(n => n.remove());
+    return (clone.innerText || '').replace(/\s+/g, ' ').trim();
+  }
+  function stripTags(el) {
+    if (!el) return el;
+    const clone = el.cloneNode(true);
+    clone.querySelectorAll('script,style,noscript,svg,canvas,template,iframe').forEach(n => n.remove());
+    return clone;
+  }
+
   // 1) 优先主内容容器
   let root = null;
   if (preferSel) {
@@ -206,12 +223,11 @@ function extractPage(SITE_EXTRACT_RULES) {
 
   // 2) 通用：找含 JD 关键词的最大容器（适配没写专用规则的官网）
   if (!root) {
-    const kw = /职位描述|岗位职责|工作职责|岗位要求|任职要求|job description|responsibilities/i;
     const all = Array.from(document.querySelectorAll('div, section, article, main'));
     let best = null, bestLen = 0;
     for (const el of all) {
-      const t = el.innerText || '';
-      if (kw.test(t) && t.length > bestLen && t.length < 20000) { best = el; bestLen = t.length; }
+      const t = cleanText(el);
+      if (JD_HEADINGS.test(t) && t.length > bestLen && t.length < 20000) { best = el; bestLen = t.length; }
     }
     root = best;
   }
@@ -219,32 +235,60 @@ function extractPage(SITE_EXTRACT_RULES) {
   // 3) 从 root 里剔除侧边栏/列表（避免左侧岗位列表混入）
   let container = root;
   if (root && ignoreSel) {
-    const clone = root.cloneNode(true);
+    const clone = stripTags(root);
     clone.querySelectorAll(ignoreSel).forEach(n => n.remove());
     container = clone;
+  } else if (root) {
+    container = stripTags(root);
   }
 
-  // 4) 标题：优先 root 内的 h1/h2/h3
+  // 4) 标题：先站点专用选择器，再非通用 heading，最后 document.title
   let h1 = '';
-  if (container) {
-    const h = container.querySelector('h1,h2,h3');
-    if (h && h.textContent.trim()) h1 = h.textContent;
+  const titleSelectors = (host.includes('zhipin') || host.includes('boss'))
+    ? '.job-name .name,.job-name>.name,.job-name,.job-title,.position-name,[class*="job-name"],[class*="job-title"],[class*="position-name"]'
+    : host.includes('nowcoder')
+    ? '.post-title,.job-name,.position-name,[class*="job-name"],[class*="position-name"]'
+    : host.includes('lagou')
+    ? '.job-name,.position-name,[class*="job-name"],[class*="position-name"]'
+    : host.includes('liepin')
+    ? '.job-title,.position-title,[class*="job-title"],[class*="position-name"]'
+    : host.includes('linkedin')
+    ? '.jobs-details-top-card__job-title,[class*="job-title"],[class*="position-title"]'
+    : '';
+
+  function pickTitle(scope) {
+    if (!scope) return '';
+    if (titleSelectors) {
+      for (const sel of titleSelectors.split(',')) {
+        const el = scope.querySelector(sel.trim());
+        if (el && el.textContent.trim()) {
+          const txt = el.textContent.trim();
+          if (!GENERIC_HEADING.test(txt)) return txt;
+        }
+      }
+    }
+    for (const h of scope.querySelectorAll('h1,h2,h3')) {
+      const txt = h.textContent.trim();
+      if (txt && !GENERIC_HEADING.test(txt)) return txt;
+    }
+    return '';
   }
-  if (!h1 && root) {
-    const h = root.querySelector('h1,h2,h3');
-    if (h && h.textContent.trim()) h1 = h.textContent;
-  }
-  if (!h1) { const h = document.querySelector('h1'); if (h) h1 = h.textContent; }
+
+  h1 = pickTitle(container) || pickTitle(root) || (() => {
+    const h = document.querySelector('h1');
+    if (h) { const txt = h.textContent.trim(); if (txt && !GENERIC_HEADING.test(txt)) return txt; }
+    return '';
+  })();
+  if (!h1) h1 = title;
 
   // 5) 正文
-  let text = (container ? (container.innerText || '') : '').replace(/\s+/g, ' ').trim();
-  // 若主容器为空，回退整页（仍剔除 ignore）
+  let text = cleanText(container).slice(0, 4000);
+  // 若主容器为空，回退整页（仍剔除 ignore + script）
   if (!text && document.body) {
-    const b = document.body.cloneNode(true);
+    const b = stripTags(document.body);
     if (ignoreSel) b.querySelectorAll(ignoreSel).forEach(n => n.remove());
-    text = (b.innerText || '').replace(/\s+/g, ' ').trim();
+    text = (b.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 4000);
   }
-  text = text.slice(0, 4000);
 
   return { title, url, h1, text, host };
 }
