@@ -2,8 +2,8 @@
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'fill') {
     try {
-      const n = fillForm(msg);
-      sendResponse({ ok: true, filled: n });
+      const r = fillForm(msg);
+      sendResponse({ ok: true, filled: r.filled, unfilled: r.unfilled });
     } catch (e) {
       sendResponse({ ok: false, error: String(e) });
     }
@@ -66,6 +66,8 @@ function buildLookup(msg) {
     if (key) lookup[key] = f.value;
     else lookup['__' + (f.label || '').trim()] = f.value;
   });
+  // LLM 二次映射补进来的显式键值对（key 已规范化，直接入表）
+  (msg.mapped || []).forEach(m => { if (m.key && m.value) lookup[m.key] = m.value; });
   return lookup;
 }
 
@@ -89,12 +91,13 @@ function fillForm(msg) {
     return !['hidden', 'submit', 'button', 'file', 'checkbox', 'radio'].includes(t);
   });
   let count = 0;
+  const unfilled = [];
   for (const el of els) {
     const lab = labelOf(el);
     const key = canonicalize(lab);
     let val = key ? lookup[key] : lookup['__' + lab.trim()];
-    if (!val) continue;
+    if (!val) { if (lab.trim()) unfilled.push(lab.trim()); continue; }
     try { setValue(el, val); count++; } catch (e) { /* 单个字段失败忽略 */ }
   }
-  return count;
+  return { filled: count, unfilled };
 }

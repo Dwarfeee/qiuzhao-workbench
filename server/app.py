@@ -380,6 +380,128 @@ def extension_capture(payload: dict):
     return fit.add_job(**data)
 
 
+@app.post("/api/extension/smart-capture")
+def extension_smart_capture(payload: dict):
+    """Edge 扩展「智能捕捉」：用 DeepSeek 把网页抽取的岗位文本解析为结构化字段。
+
+    入参：{ raw_text, url, title, h1 }
+    返回：{ ok:True, company, title, salary, location, experience, education,
+            job_type, jd_text, deadline, publish_date, source }
+    若 LLM 未配置或解析失败：{ ok:False, reason, message }（前端回退 guessJob）。
+    """
+    from urllib.parse import urlparse
+    from server.services import llm
+
+    raw = (payload.get("raw_text") or "").strip()
+    if not raw:
+        raise HTTPException(400, "raw_text 必填")
+
+    if not llm.is_configured():
+        return {"ok": False, "reason": "no-llm",
+                "message": "未配置 LLM（设置 → LLM 密钥管理 选择 Provider 并填入 Key）"}
+
+    host = ""
+    try:
+        host = (urlparse(payload.get("url") or "").hostname or "").lower()
+    except Exception:
+        host = ""
+    source = "官网"
+    if "zhipin" in host or "boss" in host: source = "BOSS直聘"
+    elif "nowcoder" in host: source = "牛客"
+    elif "lagou" in host: source = "拉勾"
+    elif "liepin" in host: source = "猎聘"
+    elif "linkedin" in host: source = "LinkedIn"
+
+    system = (
+        "你是招聘信息结构化提取助手。用户会给你从招聘网站「岗位详情页」抽取的纯文本"
+        "（已去除左侧岗位列表等无关内容）。请从中提取岗位的结构化字段，并以 JSON 返回。\n"
+        "字段定义：\n"
+        "- company：招聘公司名（必须是招人的公司，绝不要返回网站名如 BOSS直聘/牛客/拉勾）；若文本里只有岗位没有公司名则返回空字符串。\n"
+        "- title：岗位名称（如 UI设计师、后端开发工程师）。\n"
+        "- salary：薪资（如 12-20K·13薪；无则空字符串）。\n"
+        "- location：工作城市（如 杭州；无则空字符串）。\n"
+        "- experience：经验要求（如 1-3年；无则空字符串）。\n"
+        "- education：学历要求（如 本科；无则空字符串）。\n"
+        "- job_type：校招 / 社招 / 实习 / 兼职（按文本判断，无则空字符串）。\n"
+        "- jd_text：岗位职责与任职要求的原文拼接（保留关键句，最多 1500 字；无则空字符串）。\n"
+        "- deadline：截止日期（如 2026-10-31；无则空字符串）。\n"
+        "- publish_date：发布日期（如 2026-09-01；无则空字符串）。\n"
+        "只返回 JSON 对象，不要任何解释或 markdown 代码块。无法确定的字段返回空字符串。"
+    )
+    user = (
+        f"来源站点：{source}\n"
+        f"页面标题：{payload.get('title', '')}\n"
+        f"页面 H1：{payload.get('h1', '')}\n\n"
+        f"岗位详情文本：\n{raw}"
+    )
+    try:
+        out = llm.chat(system, user, json_mode=True, temperature=0.2, timeout=90)
+        data = json.loads(out)
+        if not isinstance(data, dict):
+            raise ValueError("LLM 返回非 JSON 对象")
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "reason": "parse-error", "message": str(e)[:200]}
+
+    data["source"] = source
+    data["ok"] = True
+    # 清洗：保证都是字符串
+    for k in ("company", "title", "salary", "location", "experience", "education",
+              "job_type", "jd_text", "deadline", "publish_date"):
+        data[k] = (data.get(k) or "").strip()
+    return data
+
+
+@app.post("/api/extension/smart-fill-map")
+def extension_smart_fill_map(payload: dict):
+    """Edge 扩展「智能填表」：用 DeepSeek 把网申表单字段 label 映射到规范键。
+
+    入参：{ labels:[字段显示名...], available_keys:[规范键...] }
+    返回：{ ok:True, map:{ label: key|null } }
+    注意：只发送字段「名称」，绝不发送用户真实个人信息（姓名/电话/身份证等）。
+    """
+    from server.services import llm
+
+    labels = payload.get("labels") or []
+    available_keys = payload.get("available_keys") or []
+    if not labels or not available_keys:
+        return {"ok": True, "map": {}}
+
+    if not llm.is_configured():
+        return {"ok": False, "reason": "no-llm",
+                "message": "未配置 LLM（设置 → LLM 密钥管理）"}
+
+    keys_desc = {
+        "name": "姓名", "email": "邮箱", "phone": "手机/电话", "school": "毕业院校",
+        "major": "专业", "city": "期望城市/工作地", "gender": "性别", "birth": "出生年月",
+        "political": "政治面貌", "english": "英语等级(四六级)", "grad": "毕业时间",
+        "degree": "学历/学位", "gpa": "GPA/绩点", "address": "地址", "idcard": "身份证号",
+    }
+    key_list = "\n".join(f"- {k}：{keys_desc.get(k, k)}" for k in available_keys)
+
+    system = (
+        "你是表单字段映射助手。给定一组网页表单字段的显示名称（label/placeholder/aria-label），"
+        "请把每个字段映射到最合适的「规范键」之一；若都不合适则映射到 null。\n"
+        "可用规范键：\n" + key_list + "\n"
+        "只返回 JSON 对象，格式为 { \"字段显示名\": \"规范键或null\" }，不要任何解释或 markdown。"
+    )
+    user = "需要映射的字段名：\n" + "\n".join("- " + l for l in labels)
+    try:
+        out = llm.chat(system, user, json_mode=True, temperature=0.1, timeout=60)
+        mp = json.loads(out)
+        if not isinstance(mp, dict):
+            raise ValueError("LLM 返回非 JSON 对象")
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "reason": "parse-error", "message": str(e)[:200]}
+    # 只保留合法 key
+    clean = {}
+    for lab, key in mp.items():
+        if key in available_keys:
+            clean[lab] = key
+        else:
+            clean[lab] = None
+    return {"ok": True, "map": clean}
+
+
 @app.post("/api/jobs/{job_id}/analyze")
 def analyze_job_api(job_id: int, payload: dict = None):
     """JD 分析 + 匹配度。body.use_llm=None 时按设置 default_llm_analysis 决定；True 强制 LLM（失败回退规则版）。"""
