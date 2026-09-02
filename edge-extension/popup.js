@@ -26,6 +26,32 @@ function callApi(type, payload) {
   });
 }
 
+/* 独立小窗模式下，activeTab 权限不会自动落到 popup；读取/填充页面前需显式拿到目标站主机权限 */
+async function ensureHostPermission(url) {
+  if (!url) throw new Error('未获取到当前页 URL');
+  if (/^(chrome|edge|file|about|javascript):/i.test(url)) {
+    throw new Error('该页面类型不支持扩展访问：' + url.split(':')[0] + '://');
+  }
+  let origin;
+  try { origin = new URL(url).origin + '/*'; } catch (_) { throw new Error('URL 解析失败：' + url); }
+  const allUrlsHas = await chrome.permissions.contains({ origins: ['<all_urls>'] });
+  if (allUrlsHas) return true;
+  const has = await chrome.permissions.contains({ origins: [origin] });
+  if (has) return true;
+  const granted = await chrome.permissions.request({ origins: [origin] });
+  if (!granted) throw new Error('需要授权访问 ' + origin + '，请在浏览器提示中点击「允许」');
+  return true;
+}
+async function getStoredTargetTab() {
+  const s = await chrome.storage.local.get(['lastActionTabId', 'lastActionTabUrl']);
+  if (!s.lastActionTabId) return null;
+  try {
+    const tab = await chrome.tabs.get(s.lastActionTabId);
+    if (tab && tab.url) return tab;
+  } catch (e) {}
+  return null;
+}
+
 /* ---------- 草稿暂存（侧边栏被关掉/重开时，已填内容不丢失） ---------- */
 const DRAFT_KEY = 'capture_draft';
 function saveDraft() {
@@ -64,7 +90,16 @@ function clearDraft() { chrome.storage.local.remove(DRAFT_KEY); }
 document.getElementById('capture').addEventListener('click', async () => {
   setStatus('正在读取当前页…');
   try {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    let tab = await getStoredTargetTab();
+    if (!tab) {
+      const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      tab = tabs[0];
+    }
+    if (!tab) { setStatus('读取失败：未找到当前标签页', true); return; }
+    if (tab.url && tab.url.startsWith(chrome.runtime.getURL(''))) {
+      setStatus('读取失败：请先在目标岗位页点击扩展图标，再在小窗内点「捕捉」', true); return;
+    }
+    await ensureHostPermission(tab.url);
     const res = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractPage, args: [SITE_EXTRACT_RULES] });
     const info = res && res[0] ? res[0].result : null;
     if (res && res[0] && res[0].error) { console.error('extractPage error:', res[0].error); }
@@ -190,6 +225,11 @@ document.getElementById('fill-go').addEventListener('click', async () => {
   const fields = JSON.parse(sel.dataset.fields || '[]');
   const personal = JSON.parse(sel.dataset.personal || '{}');
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab) { setStatus('填充失败：未找到当前标签页', true); return; }
+  if (tab.url && tab.url.startsWith(chrome.runtime.getURL(''))) {
+    setStatus('填充失败：请先在网申页面点「填充当前页表单」', true); return;
+  }
+  await ensureHostPermission(tab.url);
   setStatus('正在填充…');
 
   const sendFill = (extra) => new Promise(resolve => {

@@ -2,7 +2,11 @@
 const API = 'http://127.0.0.1:8787';
 
 /* 点击图标 → 打开独立小窗（失焦不关、手动×关；兼容不支持侧边栏的 Edge） */
-chrome.action.onClicked.addListener(() => {
+chrome.action.onClicked.addListener((tab) => {
+  // 记录点击时激活的标签页，避免独立小窗窃取焦点后 popup 找不到原岗位页
+  if (tab && tab.id) {
+    chrome.storage.local.set({ lastActionTabId: tab.id, lastActionTabUrl: tab.url || '' });
+  }
   const target = chrome.runtime.getURL('popup.html');
   chrome.windows.getAll(wins => {
     const ex = (wins || []).find(w => w.type === 'popup' && w.url && w.url.indexOf(target) !== -1);
