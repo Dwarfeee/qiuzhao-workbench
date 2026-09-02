@@ -26,6 +26,40 @@ function callApi(type, payload) {
   });
 }
 
+/* ---------- 草稿暂存（侧边栏被关掉/重开时，已填内容不丢失） ---------- */
+const DRAFT_KEY = 'capture_draft';
+function saveDraft() {
+  const d = {
+    company: document.getElementById('c-company').value,
+    title: document.getElementById('c-title').value,
+    loc: document.getElementById('c-loc').value,
+    source: document.getElementById('c-source').value,
+    jd: document.getElementById('c-jd').value,
+    platform: currentPlatform,
+    pageUrl: currentPageUrl
+  };
+  if (d.company || d.title || d.source || d.jd) chrome.storage.local.set({ [DRAFT_KEY]: d });
+}
+function loadDraft() {
+  chrome.storage.local.get(DRAFT_KEY, r => {
+    const d = r && r[DRAFT_KEY];
+    if (!d) return;
+    document.getElementById('c-company').value = d.company || '';
+    document.getElementById('c-title').value = d.title || '';
+    document.getElementById('c-loc').value = d.loc || '';
+    document.getElementById('c-source').value = d.source || '';
+    document.getElementById('c-jd').value = d.jd || '';
+    currentPlatform = d.platform || '';
+    currentPageUrl = d.pageUrl || '';
+    const plat = document.getElementById('c-platform');
+    if (plat) plat.textContent = currentPlatform ? '来源平台：' + currentPlatform + '（仅作追溯，不写入「来源网站」）' : '';
+    const show = document.getElementById('c-url-show');
+    if (show) show.textContent = currentPageUrl ? '📎 可追溯链接：' + currentPageUrl : '';
+    document.getElementById('cap-form').style.display = 'block';
+  });
+}
+function clearDraft() { chrome.storage.local.remove(DRAFT_KEY); }
+
 /* ---------- 捕捉当前页 ---------- */
 document.getElementById('capture').addEventListener('click', async () => {
   setStatus('正在读取当前页…');
@@ -101,6 +135,7 @@ document.getElementById('capture').addEventListener('click', async () => {
     const show = document.getElementById('c-url-show');
     if (show) show.textContent = '📎 可追溯链接：' + currentPageUrl;
     document.getElementById('cap-form').style.display = 'block';
+    saveDraft(); // 侧边栏常驻时也会保存，关掉重开可恢复
   } catch (e) { setStatus('读取失败：' + e.message, true); }
 });
 
@@ -126,6 +161,7 @@ document.getElementById('cap-save').addEventListener('click', async () => {
   if (r.ok && r.data && (r.data.job_id || r.data.ok)) {
     setStatus('✓ 已加入岗位池（#' + (r.data.job_id != null ? r.data.job_id : '') + '，来源：' + (payload.source || 'Edge捕捉') + '）\n回到工作台刷新页面即可看到');
     document.getElementById('cap-form').style.display = 'none';
+    clearDraft(); // 已入库，清掉草稿
   } else {
     const msg = (r.data && (r.data.detail || r.data.message || r.data.error || r.data.reason))
       || r.error || '未知错误（未收到服务端响应）';
@@ -379,3 +415,10 @@ function guessJob(info) {
   title = title.replace(/招聘$/, '');
   return { company: company.trim(), title: title.trim(), source };
 }
+
+/* 侧边栏常驻：打开即恢复上次未保存的草稿；表单任意输入实时暂存 */
+['c-company', 'c-title', 'c-loc', 'c-source', 'c-jd'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', saveDraft);
+});
+loadDraft();

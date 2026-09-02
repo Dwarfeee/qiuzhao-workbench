@@ -1,6 +1,17 @@
 /* 秋招工作台助手 · 后台 Service Worker（中转 API 调用，绕过扩展页 CORS） */
 const API = 'http://127.0.0.1:8787';
 
+/* 点击图标 → 打开常驻侧边栏（不会因切标签页而消失，适合"边查官网边填"） */
+if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
+  // 让「点击图标」直接打开侧边栏；旧版 Edge 不支持时退回 onClicked 兜底
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  chrome.action.onClicked.addListener(() => {
+    chrome.windows.getCurrent(w => {
+      if (w && w.id != null) chrome.sidePanel.open({ windowId: w.id }).catch(() => {});
+    });
+  });
+}
+
 function relay(type, path, payload) {
   return new Promise(resolve => {
     fetch(API + path, {
