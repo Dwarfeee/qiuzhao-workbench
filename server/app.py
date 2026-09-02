@@ -868,6 +868,7 @@ def list_applications():
             """SELECT a.*, j.company AS j_company, j.title AS j_title, j.url AS j_url,
                       j.location AS j_location, j.company_scale,
                       j.fit_score, j.grade, j.match_analysis, j.direction,
+                      j.source_url AS j_source_url, j.source AS j_source,
                       rv.diff_status, rv.pdf_path AS rv_pdf
                FROM application a JOIN job j ON j.id=a.job_id
                LEFT JOIN resume_version rv ON rv.id=a.resume_version_id

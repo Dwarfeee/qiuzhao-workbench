@@ -564,6 +564,8 @@ function precisionCard(a) {
     <div class="jc-meta">
       ${a.j_location ? `📍 ${esc(a.j_location)}` : '<span class="muted">地点未标注</span>'}
       · ${scaleTag(a.company_scale, a.job_id)}
+      ${a.j_source_url ? ` · 🌐 来源：<a href="${esc(a.j_source_url)}" target="_blank" title="${esc(a.j_source_url)}">${esc(hostOf(a.j_source_url))}</a>${a.j_source ? ' <span class="muted">· 来自 ' + esc(a.j_source) + '</span>' : ''}` : ''}
+      ${a.j_url ? ` · <a href="${esc(a.j_url)}" target="_blank">原岗位链接↗</a>` : ''}
     </div>
     <div class="checklist">${checklist.map(([ok, l]) => `<div class="${ok ? 'ck-done' : 'ck-todo'}">${ok ? '✔' : '○'} ${l}</div>`).join('')}</div>
     ${ma.matched ? `<ul class="match-list">${ma.matched.slice(0, 3).map(m =>
