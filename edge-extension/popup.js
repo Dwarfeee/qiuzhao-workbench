@@ -17,9 +17,19 @@ function getActiveUrl() {
     chrome.tabs.query({ active: true, lastFocusedWindow: true }, t => resolve(t[0] ? t[0].url : ''));
   });
 }
-function callApi(type, payload) {
+function callApi(type, payload, timeoutMs = 110000) {
   return new Promise(resolve => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve({ ok: false, error: '服务端响应超时（' + (timeoutMs / 1000) + '秒），请确认 127.0.0.1:8787 仍在运行' });
+      }
+    }, timeoutMs);
     chrome.runtime.sendMessage({ type, payload }, resp => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       if (chrome.runtime.lastError) return resolve({ ok: false, error: chrome.runtime.lastError.message });
       resolve(resp || { ok: false });
     });
@@ -245,9 +255,19 @@ document.getElementById('fill-go').addEventListener('click', async () => {
   setStatus('正在填充…');
 
   const sendFill = (extra) => new Promise(resolve => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve({ ok: false, error: '填充脚本响应超时（10秒）。该页面可能有自定义输入格式化脚本导致阻塞，请刷新页面后重试，或暂时关闭「ATS 高分简历优化」先进行普通填充' });
+      }
+    }, 10000);
     chrome.tabs.sendMessage(tab.id,
       Object.assign({ type: 'fill', fields, personal, company: sel.value }, extra),
       resp => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         if (chrome.runtime.lastError) return resolve({ ok: false, error: chrome.runtime.lastError.message });
         resolve(resp || { ok: false });
       });

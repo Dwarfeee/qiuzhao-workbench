@@ -1,12 +1,15 @@
 /* 秋招工作台助手 · 内容脚本（接收 fill 指令，按 label/name/placeholder 启发式填充表单） */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'fill') {
-    try {
-      const r = fillForm(msg);
-      sendResponse({ ok: true, filled: r.filled, unfilled: r.unfilled, all: r.all });
-    } catch (e) {
-      sendResponse({ ok: false, error: String(e) });
-    }
+    // 异步执行填充并立即返回结果，避免页面格式化/校验脚本同步递归导致内容脚本卡死
+    (async () => {
+      try {
+        const r = await fillForm(msg);
+        sendResponse({ ok: true, filled: r.filled, unfilled: r.unfilled, all: r.all });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e) });
+      }
+    })();
     return true;
   }
 });
@@ -79,11 +82,16 @@ function setValue(el, val) {
   } else {
     el.value = val;
   }
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
+  // 把 input/change 事件异步派发，避免页面格式化函数同步递归卡死内容脚本
+  setTimeout(() => {
+    try {
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch (_) {}
+  }, 0);
 }
 
-function fillForm(msg) {
+async function fillForm(msg) {
   const lookup = buildLookup(msg);
   const els = [...document.querySelectorAll('input, textarea, select')].filter(el => {
     const t = (el.type || '').toLowerCase();
@@ -100,6 +108,8 @@ function fillForm(msg) {
     let val = key ? lookup[key] : lookup['__' + lab.trim()];
     if (!val) { if (lab.trim()) unfilled.push(lab.trim()); continue; }
     try { setValue(el, val); count++; } catch (e) { /* 单个字段失败忽略 */ }
+    // 每个字段让出一次事件循环，避免长表单或页面校验脚本阻塞
+    await new Promise(r => setTimeout(r, 0));
   }
   return { filled: count, unfilled, all: allLabels };
 }
