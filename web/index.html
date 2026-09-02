@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>秋招 OS · 个人秋招 AI 工作台</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-mark">秋</div>
+      <div>
+        <div class="logo-name">秋招 OS</div>
+        <div class="logo-sub">个人秋招 AI 工作台</div>
+      </div>
+    </div>
+    <nav id="nav">
+      <a data-page="dashboard" class="active"><span>◧</span>Dashboard</a>
+      <a data-page="jobs"><span>◎</span>岗位池</a>
+      <a data-page="precision"><span>★</span>精投中心</a>
+      <a data-page="applications"><span>➤</span>投递管理</a>
+      <a data-page="interviews"><span>◔</span>面试管理</a>
+      <a data-page="sources"><span>📡</span>岗位来源</a>
+      <a data-page="analytics"><span>📊</span>数据分析</a>
+      <a data-page="kb"><span>▤</span>我的资料库</a>
+      <a data-page="resume"><span>▦</span>简历中心</a>
+      <a data-page="review"><span>↺</span>周度复盘</a>
+      <a data-page="notify"><span>🔔</span>通知</a>
+      <a data-page="settings"><span>⚙</span>设置</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div id="sys-mini" class="sys-mini">加载中…</div>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <!-- ================= Dashboard ================= -->
+    <section class="page active" id="page-dashboard">
+      <h1>Dashboard <span class="h-sub" id="dash-date"></span></h1>
+      <div id="daily-brief" class="card" style="margin-bottom:14px"></div>
+      <div class="card" id="daily-delivery" style="margin-bottom:14px"></div>
+      <div class="stat-grid" id="stat-grid"></div>
+      <div class="grid-2">
+        <div class="card"><h3>今日 Top 岗位</h3><div id="dash-top"></div></div>
+        <div class="card"><h3>即将截止</h3><div id="dash-deadline"></div></div>
+      </div>
+      <div class="grid-2">
+        <div class="card"><h3>近期面试</h3><div id="dash-interviews"></div></div>
+        <div class="card"><h3>最近投递</h3><div id="dash-recent"></div></div>
+      </div>
+      <div class="card"><h3>近 14 天投递趋势</h3><div id="dash-trend" class="trend"></div></div>
+    </section>
+
+    <!-- ================= 岗位池 ================= -->
+    <section class="page" id="page-jobs">
+      <h1>岗位池 <span class="h-sub">JD 分析 · 匹配度 · 去重</span></h1>
+      <div class="toolbar">
+        <button class="btn primary" id="btn-bulk-job">📋 批量粘贴 JD（一次多条）</button>
+        <button class="btn" id="btn-add-job">+ 添加单个岗位</button>
+        <input id="job-search" class="input" placeholder="搜索公司/岗位…">
+        <select id="job-dir-filter" class="input sel"><option value="">全部方向</option></select>
+      </div>
+      <div class="card" style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <button class="btn primary" id="btn-build-plan">📅 生成投递排期（分配到周一~周五）</button>
+          <span class="muted">前 7 天练手期优先投 0-99 / 100-499，每天 8-10 个；之后按截止紧急度 + 匹配度 + 薪资综合排序</span>
+        </div>
+      </div>
+      <div id="jobs-list" class="job-grid"></div>
+    </section>
+
+    <!-- ================= 精投中心 ================= -->
+    <section class="page" id="page-precision">
+      <h1>精投中心 <span class="h-sub">JD → 匹配 → 定制简历 → 打招呼语 → Ready</span></h1>
+      <div id="precision-list"></div>
+    </section>
+
+    <!-- ================= 投递管理 ================= -->
+    <section class="page" id="page-applications">
+      <h1>投递管理 <span class="h-sub">Application Tracker</span></h1>
+      <div id="apps-list"></div>
+    </section>
+
+    <!-- ================= 面试管理 ================= -->
+    <section class="page" id="page-interviews">
+      <h1>面试管理 <span class="h-sub">OA · HR · 一二三面 · Final · Offer</span></h1>
+      <div class="toolbar"><button class="btn primary" id="btn-add-interview">+ 记录面试</button></div>
+      <div id="interviews-list"></div>
+    </section>
+
+    <!-- ================= 岗位来源 ================= -->
+    <section class="page" id="page-sources">
+      <h1>岗位来源 <span class="h-sub">优先岗位来源池 · Edge 收藏夹 · 可增删暂停调优先级</span></h1>
+      <div class="toolbar">
+        <button class="btn primary" id="btn-import-edge">📥 导入 Edge 收藏夹</button>
+        <button class="btn" id="btn-add-source">+ 手动添加来源</button>
+      </div>
+      <div class="card"><h3>今日精投候选分级</h3><div id="candidate-buckets"></div></div>
+      <div class="card"><h3>来源池</h3><div id="sources-list"></div></div>
+    </section>
+
+    <!-- ================= 数据分析 ================= -->
+    <section class="page" id="page-analytics">
+      <h1>秋招数据分析 <span class="h-sub">匹配度 → 实际结果 · 找到最值得投的岗位</span></h1>
+      <div class="card"><h3>秋招 Funnel（每一层 = 数量 + 转化率）</h3><div id="funnel-chart"></div></div>
+      <div class="grid-2">
+        <div class="card"><h3>Fit Score → OA/面试转化</h3><div id="fit-conv"></div></div>
+        <div class="card"><h3>投递质量（今日）</h3><div id="quality-today"></div></div>
+      </div>
+      <div class="grid-2">
+        <div class="card"><h3>岗位方向分析</h3><div id="direction-analysis"></div></div>
+        <div class="card"><h3>招聘来源分析</h3><div id="source-analysis"></div></div>
+      </div>
+    </section>
+
+    <!-- ================= 我的资料库 ================= -->
+    <section class="page" id="page-kb">
+      <h1>我的资料库 <span class="h-sub">Candidate Knowledge Base</span></h1>
+      <div class="stat-grid small" id="kb-stats"></div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>上传资料</h3>
+          <div class="form-row">
+            <select id="kb-category" class="input sel">
+              <option value="resume">简历</option><option value="portfolio">作品集</option>
+              <option value="project">项目资料</option><option value="award">奖状</option>
+              <option value="certificate">证书</option><option value="education">教育</option>
+              <option value="experience">实习/工作</option><option value="other">其他</option>
+            </select>
+            <input type="file" id="kb-file" class="input">
+            <button class="btn primary" id="btn-kb-upload">上传并解析</button>
+          </div>
+          <div class="muted" style="margin-top:6px">PDF 提取文本；图片走 OCR（不可用时提示人工转录）；解析后自动进入全文索引。</div>
+        </div>
+        <div class="card">
+          <h3>网页版作品集</h3>
+          <div class="form-row">
+            <input id="kb-url" class="input" placeholder="https://… 作品集网址">
+            <button class="btn primary" id="btn-kb-url">抓取并入库</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>全文搜索</h3>
+        <div class="form-row"><input id="kb-q" class="input" placeholder="如：AI 产品 / 用户研究 / 数据分析"><button class="btn" id="btn-kb-search">搜索</button></div>
+        <div id="kb-search-result"></div>
+      </div>
+      <div class="card"><h3>资料文档</h3><div id="kb-docs"></div></div>
+      <div class="card">
+        <h3>个人信息</h3>
+        <div class="personal-grid" id="personal-form"></div>
+        <button class="btn primary" id="btn-personal-save" style="margin-top:10px">保存</button>
+      </div>
+    </section>
+
+    <!-- ================= 简历中心 ================= -->
+    <section class="page" id="page-resume">
+      <h1>简历中心 <span class="h-sub">Master 只读 · 定制版本 · Diff 验证</span></h1>
+      <div id="master-info"></div>
+      <div class="card"><h3>简历版本</h3><div id="versions-list"></div></div>
+    </section>
+
+    <!-- ================= 周度复盘 ================= -->
+    <section class="page" id="page-review">
+      <h1>周度复盘 <span class="h-sub">Weekly Review</span></h1>
+      <div class="toolbar"><button class="btn primary" id="btn-review-gen">生成本周复盘</button></div>
+      <div id="reviews-list"></div>
+    </section>
+
+    <!-- ================= 通知 ================= -->
+    <section class="page" id="page-notify">
+      <h1>通知 <span class="h-sub">S级岗位 · 截止 · 面试 · 周报（未来微信接入同一通道）</span></h1>
+      <div id="notify-list"></div>
+    </section>
+
+    <!-- ================= 设置 ================= -->
+    <section class="page" id="page-settings">
+      <h1>设置 · 系统状态</h1>
+      <div class="card"><h3>Automation 设置</h3><div id="automation-settings"></div></div>
+      <div class="card"><h3>通知设置（微信 / Webhook）</h3><div id="notify-settings"></div></div>
+      <div class="card"><h3>LLM 密钥管理（生成定制简历用）</h3><div id="llm-settings"></div></div>
+      <div class="card"><h3>投递策略（练手期 / 面试准备 / 日配额 / 周目标）</h3><div id="delivery-settings"></div></div>
+      <div class="card"><h3>Automation 运行记录</h3><div id="automation-runs"></div></div>
+      <div id="settings-info" class="card"></div>
+    </section>
+  </main>
+</div>
+
+<!-- ================= Modal 容器 ================= -->
+<div class="modal-mask" id="modal-mask">
+  <div class="modal" id="modal"></div>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

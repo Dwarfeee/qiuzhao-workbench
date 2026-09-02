@@ -1,0 +1,39 @@
+# ===== 秋招工作台 .gitignore =====
+# 原则：只纳入「源码 + 文档 + 配置」，把隐私数据/运行时产物/大文件排除在版本库之外。
+
+# --- 密钥 / 环境变量（绝不入库） ---
+.env
+.env.local
+*.local
+
+# --- Python 缓存 ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# --- 运行时数据库（含个人求职数据，体积大且易变） ---
+jobs.db
+jobs.db-shm
+jobs.db-wal
+backups/
+
+# --- 个人资料 / 生成产物（照片、简历 PDF、桌面端构建等，非源码） ---
+candidate/
+resume/
+desktop/
+*.pdf
+
+# --- 项目内部数据（WorkBuddy 运行态，非源码） ---
+.workbuddy/
+
+# --- 系统 / 编辑器 ---
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+
+# --- 依赖安装目录（若将来本地建 venv） ---
+node_modules/
