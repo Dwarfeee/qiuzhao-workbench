@@ -68,6 +68,20 @@ document.getElementById('capture').addEventListener('click', async () => {
       setStatus('已提取（启发式），请确认后加入岗位池（公司/岗位名必填）');
     }
 
+    // 公司名已知时，先联网检索其官方招聘站，再展示表单（避免手快保存时还是平台名）
+    if (company && company.trim()) {
+      setStatus('正在全网检索「' + company.trim() + '」的官方招聘网站…');
+      try {
+        const sr = await callApi('find-company-site', { company: company.trim() });
+        if (sr.ok && sr.data && sr.data.ok && sr.data.url) {
+          source = sr.data.url;
+          setStatus('✓ 已定位官方站：' + sr.data.url + '（可手动修改后再保存）');
+        } else if (sr.ok && sr.data && sr.data.message) {
+          setStatus('官网检索未果（' + sr.data.message + '），已保留招聘平台名，请手动核对', true);
+        }
+      } catch (e) { console.warn('find-company-site 失败：', e); }
+    }
+
     document.getElementById('c-company').value = company;
     document.getElementById('c-title').value = title;
     document.getElementById('c-loc').value = loc;
@@ -85,13 +99,15 @@ document.getElementById('cap-save').addEventListener('click', async () => {
   if (!company || !title) { setStatus('招聘公司和岗位名必填', true); return; }
   if (SITE_NAMES.includes(company)) { setStatus('「' + company + '」是网站名，请填招人的公司', true); return; }
   const pageUrl = await getActiveUrl();
+  const srcVal = document.getElementById('c-source').value.trim();
+  const isSiteUrl = /^https?:\/\//i.test(srcVal);  // 官网检索成功时为 URL，否则是招聘平台名
   const payload = {
     company,
     title,
     location: document.getElementById('c-loc').value.trim(),
-    source: document.getElementById('c-source').value.trim(),
+    source: srcVal,
     url: pageUrl,
-    source_url: pageUrl,
+    source_url: isSiteUrl ? srcVal : pageUrl,  // 官方站则来源链接指向官网，否则指向原岗位页
     jd_text: document.getElementById('c-jd').value.trim()
   };
   setStatus('正在加入岗位池…');

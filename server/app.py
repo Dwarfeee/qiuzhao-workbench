@@ -502,6 +502,93 @@ def extension_smart_fill_map(payload: dict):
     return {"ok": True, "map": clean}
 
 
+# 已知招聘平台域名（启发式兜底时用于排除）
+_BLOCKED_HOST_HINTS = ("zhipin", "nowcoder", "lagou", "liepin", "zhaopin", "51job",
+                       "boss", "kanzhun", "linkedin", "yingjiesheng", "jobui", "kanzhun")
+
+
+def _heuristic_pick(company: str, candidates: list):
+    """无 LLM 时的兜底：优先『官方域名带 jobs/career/校园/招聘』且『非招聘平台』的候选。"""
+    import re as _re
+    import urllib.parse as _up
+
+    def score(c):
+        host = _up.urlparse(c["url"]).hostname or ""
+        s = 0
+        if any(b in host for b in _BLOCKED_HOST_HINTS):
+            s -= 10
+        if _re.search(r"jobs|career|campus|recruit|zhaopin|hire|graduate|校招|招聘|campus", host, _re.I):
+            s += 3
+        if company and _re.search(_re.escape(company[:2]), c["title"] + host, _re.I):
+            s += 1
+        return s
+
+    ranked = sorted(candidates, key=score, reverse=True)
+    best = ranked[0]
+    return best["url"], best["title"]
+
+
+@app.post("/api/extension/find-company-site")
+def extension_find_company_site(payload: dict):
+    """Edge 扩展「来源网站」智能补全：用搜索引擎(默认 DuckDuckGo)全网检索公司官网，
+    再让 LLM 从结果里挑出『带招聘入口的官方站』。
+
+    入参：{ company }
+    返回：{ ok:True, url, title, llmLed } 或 { ok:False, reason, message }
+    """
+    from server.services import search, llm
+
+    company = (payload.get("company") or "").strip()
+    if not company:
+        return {"ok": False, "reason": "no-company", "message": "缺少公司名"}
+
+    candidates = search.search_company_site(company)
+    if not candidates:
+        return {"ok": False, "reason": "no-results",
+                "message": "全网检索无结果（可能本机无外网或被搜索引擎拦截）"}
+
+    # 没有 LLM 时，用启发式兜底
+    if not llm.is_configured():
+        url, title = _heuristic_pick(company, candidates)
+        return {"ok": True, "url": url, "title": title, "llmLed": False}
+
+    # LLM 从候选里挑官方招聘站
+    cand_text = "\n".join(
+        f"{i + 1}. {c['url']} —— {c['title']}{('｜' + c['snippet']) if c['snippet'] else ''}"
+        for i, c in enumerate(candidates[:8])
+    )
+    system = (
+        "你是招聘官网判定助手。给定一家公司名称和它在搜索引擎里返回的候选网页列表，"
+        "请挑出「该公司官方招聘网站」——即公司自己官网里负责招聘/校招/社招的入口页面"
+        "（域名通常是公司品牌域名，或 jobs./careers./campus. 子域）。\n"
+        "判定要点：\n"
+        "- 优先选公司官方域名下的招聘页（如 https://jobs.xxx.com、https://www.xxx.com/campus）。\n"
+        "- 排除招聘平台（BOSS直聘/牛客/拉勾/猎聘/智联/前程无忧等）、新闻、百科、股吧、应用商店、第三方聚合页。\n"
+        "- 若候选里都没有合适的官方招聘站，返回空字符串。\n"
+        "只返回 JSON：{\"url\": \"选中的URL或空字符串\", \"reason\": \"简短理由\"}，不要 markdown。"
+    )
+    user = f"公司名称：{company}\n\n候选网页：\n{cand_text}"
+    try:
+        out = llm.chat(system, user, json_mode=True, temperature=0.1, timeout=60)
+        data = json.loads(out)
+        url = (data.get("url") or "").strip()
+        if not url:
+            url, title = _heuristic_pick(company, candidates)
+            return {"ok": True, "url": url, "title": title, "llmLed": False,
+                    "note": "llm 无合适结果，启发式兜底"}
+        # 校验 url 必须来自候选，否则退回第一个
+        if not any(url == c["url"] for c in candidates):
+            url, title = _heuristic_pick(company, candidates)
+            return {"ok": True, "url": url, "title": title, "llmLed": False,
+                    "note": "llm 返回非候选 url，启发式兜底"}
+        title = next((c["title"] for c in candidates if c["url"] == url), "")
+        return {"ok": True, "url": url, "title": title, "llmLed": True}
+    except Exception as e:  # noqa: BLE001
+        url, title = _heuristic_pick(company, candidates)
+        return {"ok": True, "url": url, "title": title, "llmLed": False,
+                "note": f"llm 异常：{str(e)[:120]}"}
+
+
 @app.post("/api/jobs/{job_id}/analyze")
 def analyze_job_api(job_id: int, payload: dict = None):
     """JD 分析 + 匹配度。body.use_llm=None 时按设置 default_llm_analysis 决定；True 强制 LLM（失败回退规则版）。"""

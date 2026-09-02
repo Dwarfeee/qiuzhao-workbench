@@ -27,6 +27,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     relay('smart-fill-map', '/api/extension/smart-fill-map', msg.payload).then(sendResponse);
     return true;
   }
+  if (msg.type === 'find-company-site') {
+    relay('find-company-site', '/api/extension/find-company-site', msg.payload).then(sendResponse);
+    return true;
+  }
   if (msg.type === 'form-data') {
     relay('form-data', '/api/extension/form-data').then(sendResponse);
     return true;
