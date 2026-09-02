@@ -253,6 +253,41 @@ document.getElementById('fill-go').addEventListener('click', async () => {
   if (!r1.ok) { setStatus('填充失败：' + (r1.error || ''), true); return; }
   let total = r1.filled || 0;
   const unfilled = (r1.unfilled || []).filter(Boolean);
+  const atsOn = document.getElementById('ats-opt') && document.getElementById('ats-opt').checked;
+
+  // ATS 高分简历优化模式：用 LLM 按 JD 关键词重写叙述类字段（硬事实原样保留）
+  if (atsOn) {
+    setStatus('✓ 已填充 ' + total + ' 个字段；ATS 正在按 JD 关键词优化叙述类字段…');
+    try {
+      const allLabels = (r1.all && r1.all.length) ? r1.all : unfilled;
+      const ar = await callApi('fill-ats', { labels: allLabels, company: sel.value });
+      if (ar.ok && ar.data && ar.data.ok && ar.data.map) {
+        const mapped = [];
+        for (const lab of allLabels) {
+          const val = ar.data.map[lab];
+          if (val) mapped.push({ key: '__' + lab, value: String(val) });
+        }
+        if (mapped.length) {
+          const rA = await sendFill({ mapped });
+          total = (rA.filled || 0);
+          setStatus('✓ ATS 优化完成，已填充 ' + total + ' 个字段'
+            + (ar.data.jd_used ? '（按该岗位 JD 关键词改写叙述类字段，硬事实原样保留）'
+                               : '（未匹配到该岗位 JD，按通用 ATS 最佳实践优化）')
+            + '，请核对并补全缺失项');
+          return;
+        }
+      } else if (ar.ok && ar.data && ar.data.reason === 'no-llm') {
+        setStatus('✓ 已填充 ' + total + ' 个字段；LLM 未配置，无法 ATS 优化（设置 → LLM 密钥管理）', true);
+        return;
+      } else if (ar.ok && ar.data && ar.data.reason) {
+        setStatus('✓ 已填充 ' + total + ' 个字段；ATS 优化跳过：' + (ar.data.message || ar.data.reason), true);
+        return;
+      }
+    } catch (e) { console.warn('fill-ats 失败，跳过：', e); }
+    setStatus('✓ 已填充 ' + total + ' 个字段（ATS 优化跳过：调用失败），请核对并补全缺失项');
+    return;
+  }
+
   setStatus('✓ 已填充 ' + total + ' 个字段，DeepSeek 正在核对剩余 ' + unfilled.length + ' 个字段…');
 
   // 第二轮：规则未命中字段 → DeepSeek 规范键映射后补填（隐私：只发 label，不发真实值）

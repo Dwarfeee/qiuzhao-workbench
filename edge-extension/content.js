@@ -3,7 +3,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'fill') {
     try {
       const r = fillForm(msg);
-      sendResponse({ ok: true, filled: r.filled, unfilled: r.unfilled });
+      sendResponse({ ok: true, filled: r.filled, unfilled: r.unfilled, all: r.all });
     } catch (e) {
       sendResponse({ ok: false, error: String(e) });
     }
@@ -92,12 +92,14 @@ function fillForm(msg) {
   });
   let count = 0;
   const unfilled = [];
+  const allLabels = [];
   for (const el of els) {
     const lab = labelOf(el);
+    if (lab.trim()) allLabels.push(lab.trim());
     const key = canonicalize(lab);
     let val = key ? lookup[key] : lookup['__' + lab.trim()];
     if (!val) { if (lab.trim()) unfilled.push(lab.trim()); continue; }
     try { setValue(el, val); count++; } catch (e) { /* 单个字段失败忽略 */ }
   }
-  return { filled: count, unfilled };
+  return { filled: count, unfilled, all: allLabels };
 }

@@ -563,6 +563,49 @@ def extension_smart_fill_map(payload: dict):
     return {"ok": True, "map": clean}
 
 
+def _gather_netapply_entries():
+    """汇总「网申信息总汇 + 个人基本信息」，返回可填值条目列表（供语义填表 / ATS 优化复用）。"""
+    conn = connect()
+    try:
+        p = conn.execute("SELECT * FROM personal_info WHERE id=1").fetchone()
+        personal = dict(p) if p else {}
+        rows = conn.execute(
+            "SELECT category, label, value, kind, link_url FROM net_apply_info "
+            "ORDER BY order_no, id").fetchall()
+        fields = [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+    entries = []
+    pm = {"name": personal.get("name"), "email": personal.get("email"), "phone": personal.get("phone"),
+          "school": personal.get("school"), "major": personal.get("major"), "city": personal.get("city"),
+          "gender": personal.get("gender"), "birth": personal.get("birth"), "political": personal.get("political"),
+          "english": personal.get("english"), "grad": personal.get("grad"), "degree": personal.get("degree"),
+          "gpa": personal.get("gpa"), "address": personal.get("address"), "idcard": personal.get("idcard")}
+    for k, v in pm.items():
+        if v:
+            entries.append({"label": k, "value": str(v).strip()})
+    for f in fields:
+        v = (f["link_url"] or f["value"]) if f["kind"] == "link" else f["value"]
+        if v and str(v).strip():
+            entries.append({"label": f["label"], "value": str(v).strip(), "group": f["category"] or ""})
+    return entries
+
+
+def _fetch_jd_for_company(company: str):
+    """按公司名从岗位池取最新一条 JD 文本（供 ATS 优化做关键词对齐）。"""
+    if not company:
+        return ""
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT jd_text FROM job WHERE company LIKE ? AND jd_text IS NOT NULL AND jd_text<>'' "
+            "ORDER BY id DESC LIMIT 1", ("%" + company + "%",)).fetchone()
+        return dict(row)["jd_text"] if row else ""
+    finally:
+        conn.close()
+
+
 @app.post("/api/extension/fill-netapply")
 def extension_fill_netapply(payload: dict):
     """Edge 扩展「LLM 语义填表」：把网页表单字段 label 与用户的网申信息总汇做语义匹配，
@@ -578,32 +621,7 @@ def extension_fill_netapply(payload: dict):
     if not labels:
         return {"ok": True, "map": {}}
 
-    conn = connect()
-    try:
-        p = conn.execute("SELECT * FROM personal_info WHERE id=1").fetchone()
-        personal = dict(p) if p else {}
-        rows = conn.execute(
-            "SELECT category, label, value, kind, link_url FROM net_apply_info "
-            "ORDER BY order_no, id").fetchall()
-        fields = [dict(r) for r in rows]
-    finally:
-        conn.close()
-
-    # 可填值来源
-    entries = []
-    pm = {"name": personal.get("name"), "email": personal.get("email"), "phone": personal.get("phone"),
-          "school": personal.get("school"), "major": personal.get("major"), "city": personal.get("city"),
-          "gender": personal.get("gender"), "birth": personal.get("birth"), "political": personal.get("political"),
-          "english": personal.get("english"), "grad": personal.get("grad"), "degree": personal.get("degree"),
-          "gpa": personal.get("gpa"), "address": personal.get("address"), "idcard": personal.get("idcard")}
-    for k, v in pm.items():
-        if v:
-            entries.append({"label": k, "value": str(v).strip()})
-    for f in fields:
-        v = (f["link_url"] or f["value"]) if f["kind"] == "link" else f["value"]
-        if v and str(v).strip():
-            entries.append({"label": f["label"], "value": str(v).strip(),
-                            "group": f["category"] or ""})
+    entries = _gather_netapply_entries()
 
     if not entries:
         return {"ok": False, "reason": "no-data", "message": "网申信息总汇为空，请先录入信息"}
@@ -634,6 +652,63 @@ def extension_fill_netapply(payload: dict):
         return {"ok": False, "reason": "parse-error", "message": str(e)[:200]}
     clean = {lab: (mp.get(lab) or None) for lab in labels}
     return {"ok": True, "map": clean}
+
+
+@app.post("/api/extension/fill-ats")
+def extension_fill_ats(payload: dict):
+    """Edge 扩展「ATS 高分简历优化填表」：用 LLM 按 JD 关键词重写叙述类字段，硬事实字段原样返回。
+
+    入参：{ labels:[表单字段显示名...], company:可选, jd:可选(缺则由岗位池按公司取) }
+    返回：{ ok:True, map:{ label: 优化后值|null }, jd_used:bool }
+    安全：只发送用户本人网申信息 + 公开 JD；硬事实(姓名/邮箱/电话/院校/GPA…)绝不改写。
+    """
+    from server.services import llm
+
+    labels = payload.get("labels") or []
+    if not labels:
+        return {"ok": True, "map": {}}
+
+    company = (payload.get("company") or "").strip()
+    jd = (payload.get("jd") or "").strip()
+    if not jd:
+        jd = _fetch_jd_for_company(company)
+
+    entries = _gather_netapply_entries()
+    if not entries:
+        return {"ok": False, "reason": "no-data", "message": "网申信息总汇为空，请先录入信息"}
+
+    if not llm.is_configured():
+        return {"ok": False, "reason": "no-llm",
+                "message": "未配置 LLM（设置 → LLM 密钥管理），无法做 ATS 优化"}
+
+    entries_txt = "\n".join(f'- [{e.get("group", "")}] {e["label"]}：{e["value"]}' for e in entries)
+    system = (
+        "你是 ATS（Applicant Tracking System，申请人追踪系统）简历优化助手。企业用 ATS 对网申表单做关键词匹配与解析评分。"
+        "任务：根据用户已有的真实信息（网申信息总汇），为给定的网页表单字段，生成最易被 ATS 打高分的填写内容。\n"
+        "铁律与规则：\n"
+        "1) 严格忠于用户真实信息，绝不可编造用户没有的经历、公司、技能、数据、证书。\n"
+        "2) 以下「硬事实」字段必须原样返回，不得改写或润色：姓名、邮箱、电话/手机、身份证、出生年月、性别、"
+        "毕业院校、专业、学历/学位、毕业时间、GPA/绩点、政治面貌、地址、英语等级(四六级)、期望城市。\n"
+        "3) 对于「开放性叙述」字段（实习/工作/项目经历、自我评价、个人优势、技能总结、获奖、科研、社团活动、"
+        "求职意向等），在遵守第1条前提下，用 JD 中的关键词（岗位要求的技能/工具/能力/行业术语）重写，使其更易被 ATS 命中："
+        "动词开头、量化成果、使用标准术语；保持简洁（适合表单文本框，通常 ≤ 300 字）。\n"
+        "4) 若某字段在用户真实信息中找不到任何对应内容，返回 null（不要编造）。\n"
+        "5) 只返回 JSON 对象 { \"表单字段名\": \"填写内容或null\" }，不要任何解释或 markdown。"
+    )
+    user = (
+        f"# 目标岗位 JD\n{jd or '（未提供 JD，按通用 ATS 最佳实践优化：动词开头、量化、关键词突出）'}\n\n"
+        f"# 用户真实信息（唯一信息来源，不得超出）\n{entries_txt}\n\n"
+        f"# 需要填的表单字段\n" + "\n".join("- " + l for l in labels)
+    )
+    try:
+        out = llm.chat(system, user, json_mode=True, temperature=0.3, timeout=120)
+        mp = json.loads(out)
+        if not isinstance(mp, dict):
+            raise ValueError("LLM 返回非 JSON 对象")
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "reason": "parse-error", "message": str(e)[:200]}
+    clean = {lab: (mp.get(lab) or None) for lab in labels}
+    return {"ok": True, "map": clean, "ats": True, "jd_used": bool(jd)}
 
 
 @app.post("/api/extension/recommend-resume")
