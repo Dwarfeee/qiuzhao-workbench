@@ -214,15 +214,16 @@ async function renderJobs() {
 }
 
 /* ---------- 截止时间与规模辅助 ---------- */
-function deadlineHint(dl) {
+function deadlineHint(dl, scale) {
   if (!dl) return '';
   const d = new Date(dl.replace(/-/g, '/'));
   if (isNaN(d)) return '';
   const days = Math.ceil((d - new Date()) / 86400000);
+  const big = scale === '500+';
   if (days < 0) return ' <span class="badge b-D">已截止</span>';
   if (days === 0) return ' <span class="badge b-D">🔴 TODAY</span>';
   if (days <= 3) return ` <span class="badge b-C">⚠️ ${days} 天后</span>`;
-  if (days <= 14) return ` <span class="muted">（${days} 天）</span>`;
+  if (days <= 14) return big ? ` <span class="badge b-C">🔥 大厂 ${days} 天紧急</span>` : ` <span class="muted">（${days} 天）</span>`;
   return ` <span class="muted">（${days} 天）</span>`;
 }
 
@@ -237,6 +238,14 @@ function fallRecruitTag(v) {
   if (v === '进行中') return '<span class="badge b-A">🍂 秋招进行中</span>';
   if (v === '未开始') return '<span class="badge b-D">秋招未开始</span>';
   return `<span class="tag">秋招：${esc(v)}</span>`;
+}
+
+// 投递策略标签：体现 planner 的「小厂练手 / 大厂主投」思路
+function strategyTag(scale) {
+  if (scale === '0-99') return '<span class="badge b-B">🛠 小厂练手</span>';
+  if (scale === '100-499') return '<span class="badge b-A">🎯 主投</span>';
+  if (scale === '500+') return '<span class="badge b-S">🏆 大厂冲刺</span>';
+  return '';
 }
 
 window.setFallRecruit = (id, cur) => {
@@ -324,16 +333,17 @@ function jobCard(j) {
     <div>${j.grade ? `<span class="badge b-${j.grade}">${j.grade} · ${j.fit_score}</span>` : '<span class="muted">未分析</span>'}
     ${bucket ? `<span class="badge ${bucket === 'A' ? 'b-S' : bucket === 'B' ? 'b-A' : bucket === 'C' ? 'b-B' : 'b-D'}" style="margin-left:4px">${bucket === 'A' ? '强匹配' : bucket === 'B' ? '较匹配' : bucket === 'C' ? '弱匹配' : '不匹配'}</span>` : ''}</div></div>
     <div class="jc-meta">
-      <span title=\"抓取来源网站\">🌐 来源：<b>${esc(j.source || '手动添加')}</b></span>
+      <span title="抓取来源网站（可点击追溯）">🌐 来源：${ j.source_url ? '<a href="'+esc(j.source_url)+'" target="_blank">'+esc(j.source || '未知')+'</a>' : '<b>'+esc(j.source || '手动添加')+'</b>' }</span>
       ${j.location ? ` · 📍 ${esc(j.location)}` : ''}
       ${j.job_type ? ` · ${esc(j.job_type)}` : ''}
-      ${j.deadline ? ` · ⏰ 截止 <b>${esc(j.deadline)}</b>${deadlineHint(j.deadline)}` : ' · ⏰ 截止 <span class=\"muted\">未标注</span>'}
+      ${j.deadline ? ` · ⏰ 截止 <b>${esc(j.deadline)}</b>${deadlineHint(j.deadline, j.company_scale)}` : ' · ⏰ 截止 <span class=\"muted\">未标注</span>'}
       ${j.url ? ` · <a href="${esc(j.url)}" target="_blank">原岗位链接↗</a>` : ''}
     </div>
     <div class="jc-tags">
       <span class="tag">${esc(j.direction || '未分类')}</span>
       <span class="tag">${STATUS_LABELS[j.status] || j.status}</span>
       ${scaleTag(j.company_scale, j.id)}
+      ${strategyTag(j.company_scale)}
       ${fallRecruitTag(j.fall_recruit)}
       ${j.jd_text ? '<span class="tag">有 JD</span>' : ''}
     </div>
@@ -465,6 +475,16 @@ $('#btn-add-job').onclick = () => {
 };
 $('#job-search').oninput = debounce(renderJobs, 300);
 $('#job-dir-filter').onchange = renderJobs;
+// 「仅看 UI/UX」硬过滤：切到 UI/UX 方向并高亮；再次点击取消
+$('#btn-uiux-only').onclick = () => {
+  const sel = $('#job-dir-filter');
+  if (![...sel.options].some(o => o.value === 'UI/UX')) {
+    const o = document.createElement('option'); o.value = 'UI/UX'; o.textContent = 'UI/UX'; sel.appendChild(o);
+  }
+  if (sel.value === 'UI/UX') { sel.value = ''; $('#btn-uiux-only').classList.remove('primary'); }
+  else { sel.value = 'UI/UX'; $('#btn-uiux-only').classList.add('primary'); }
+  renderJobs();
+};
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 
 /* ---------- 批量粘贴 JD（一次多条，用 --- 分隔）---------- */

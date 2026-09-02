@@ -36,24 +36,31 @@ document.getElementById('capture').addEventListener('click', async () => {
     document.getElementById('c-loc').value = '';
     document.getElementById('c-source').value = g.source || '';
     document.getElementById('c-jd').value = (info.text || '').slice(0, 3000);
+    const show = document.getElementById('c-url-show');
+    if (show) show.textContent = '📎 可追溯链接：' + (tab.url || info.url || '');
     document.getElementById('cap-form').style.display = 'block';
-    setStatus('已提取，请确认后加入岗位池（公司/岗位名必填）');
+    setStatus('已提取，请确认后加入岗位池（招聘公司/岗位名必填，来源网站已自动识别）');
   } catch (e) { setStatus('读取失败：' + e.message, true); }
 });
 
 document.getElementById('cap-save').addEventListener('click', async () => {
+  const company = document.getElementById('c-company').value.trim();
+  const title = document.getElementById('c-title').value.trim();
+  if (!company || !title) { setStatus('招聘公司和岗位名必填', true); return; }
+  if (SITE_NAMES.includes(company)) { setStatus('「' + company + '」是网站名，请填招人的公司', true); return; }
+  const pageUrl = await getActiveUrl();
   const payload = {
-    company: document.getElementById('c-company').value.trim(),
-    title: document.getElementById('c-title').value.trim(),
+    company,
+    title,
     location: document.getElementById('c-loc').value.trim(),
     source: document.getElementById('c-source').value.trim(),
-    url: await getActiveUrl(),
+    url: pageUrl,
+    source_url: pageUrl,
     jd_text: document.getElementById('c-jd').value.trim()
   };
-  if (!payload.company || !payload.title) { setStatus('公司和岗位名必填', true); return; }
   setStatus('正在加入岗位池…');
   const r = await callApi('capture', payload);
-  if (r.ok) { setStatus('✓ 已加入岗位池'); document.getElementById('cap-form').style.display = 'none'; }
+  if (r.ok) { setStatus('✓ 已加入岗位池（来源：' + (payload.source || 'Edge捕捉') + '）'); document.getElementById('cap-form').style.display = 'none'; }
   else setStatus('失败：' + (r.error || '未知错误'), true);
 });
 
@@ -91,9 +98,23 @@ function extractPage() {
   const title = document.title || '';
   const url = location.href;
   const h1 = (document.querySelector('h1') || {}).textContent || '';
-  const text = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').slice(0, 3000);
+  // 优先抓常见 JD 容器（BOSS/牛客/官网多有专属结构），回退整页正文
+  let jd = '';
+  const cand = document.querySelector(
+    '.job-detail, .job-description, #job-description, .description, .detail-content, ' +
+    '[class*="job-desc" i], [class*="JD" i], [id*="jd" i], [class*="position-detail" i]');
+  if (cand) jd = cand.innerText || '';
+  const text = (jd || (document.body ? document.body.innerText : '')).replace(/\s+/g, ' ').slice(0, 3000);
   return { title, url, h1, text };
 }
+
+// 已知招聘站点名（绝不能被当成「招聘公司」）
+const SITE_NAMES = ['BOSS直聘', 'Boss直聘', '牛客网', '牛客', '拉勾网', '拉勾', '猎聘', 'LinkedIn', '领英', '智联招聘', '前程无忧', '51job', '实习僧', '海投网'];
+
+// 岗位名常见关键词（用于区分「职位段」与「公司段」）
+// 注意：不含「招聘/校招/社招」，因为它们前面必带岗位名（如 产品经理招聘→产品/经理 已命中），
+// 否则「腾讯招聘」会被误判为职位段。
+const JOB_KW = /(设计|产品|运营|开发|工程|程序|算法|测试|前端|后端|数据|分析|经理|专员|助理|实习|主管|总监|架构|研发|hr|人事|财务|市场|销售|客服|编辑|记者|策划|研究|顾问)/i;
 
 function guessJob(info) {
   let host = '';
@@ -104,15 +125,34 @@ function guessJob(info) {
   else if (/lagou/.test(host)) source = '拉勾';
   else if (/liepin/.test(host)) source = '猎聘';
   else if (/linkedin/.test(host)) source = 'LinkedIn';
-  let title = (info.h1 || info.title || '').trim();
-  let company = '';
-  const segs = title.split(/[|\-－]/).map(s => s.trim()).filter(Boolean);
+
+  let raw = (info.h1 || info.title || '').trim();
+  // 去掉标题尾巴的已知站点名（如 "-BOSS直聘"），避免污染公司识别
+  let cleaned = raw.replace(/(?:[-_｜|]\s*)?(BOSS直聘|Boss直聘|牛客网|牛客|拉勾网|拉勾|猎聘|LinkedIn|领英|智联招聘|前程无忧|51job|实习僧|海投网)\s*$/i, '').trim();
+  if (!cleaned) cleaned = raw;
+
+  const segs = cleaned.split(/[|\-－_＿]/).map(s => s.trim()).filter(Boolean);
+  let company = '', title = cleaned;
+
   if (segs.length >= 2) {
-    const tail = segs[segs.length - 1] || '';
-    if (/(直聘|招聘|boss|牛客|校招|社招|实习|官网|careers?|job)$/i.test(tail) || segs.length > 2) {
-      company = segs[segs.length - 2] || '';
-      title = segs[0] || title;
+    const seg0Job = JOB_KW.test(segs[0]);
+    const seg1Job = JOB_KW.test(segs[1]);
+    if (segs.length === 2) {
+      // 「职位-公司」或「公司-职位」
+      if (seg0Job && !seg1Job) { title = segs[0]; company = segs[1]; }
+      else if (seg1Job && !seg0Job) { title = segs[1]; company = segs[0]; }
+      else { title = segs[0]; company = segs[1]; } // 默认按 BOSS 约定：职位-公司
+    } else {
+      // 3 段及以上：「职位-公司-城市」或「公司-职位-城市」
+      if (seg0Job) { title = segs[0]; company = segs[1]; }
+      else if (seg1Job) { title = segs[1]; company = segs[0]; }
+      else { title = segs[0]; company = segs[1]; }
     }
   }
-  return { company, title, source };
+  // 守卫：公司绝不能是站点名
+  if (SITE_NAMES.includes(company)) company = '';
+  // 收尾：剥掉公司/职位尾巴的「招聘」（如「腾讯招聘」→「腾讯」、「UI设计师招聘」→「UI设计师」）
+  company = company.replace(/招聘$/, '');
+  title = title.replace(/招聘$/, '');
+  return { company: company.trim(), title: title.trim(), source };
 }

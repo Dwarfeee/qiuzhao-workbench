@@ -10,10 +10,11 @@
 
     <button id="capture" class="big">📸 捕捉当前页岗位</button>
     <div id="cap-form" class="box" style="display:none">
-      <label>公司 *</label><input id="c-company" placeholder="如 腾讯">
-      <label>岗位 *</label><input id="c-title" placeholder="如 产品经理">
+      <label>招聘公司 *（招人的公司，不是网站名）</label><input id="c-company" placeholder="如 腾讯 / 字节跳动">
+      <label>岗位 *</label><input id="c-title" placeholder="如 UI设计师 / 产品经理">
       <label>地点</label><input id="c-loc" placeholder="如 深圳">
-      <label>来源</label><input id="c-source" placeholder="如 BOSS直聘 / 牛客 / 官网">
+      <label>来源网站（自动识别，可改）</label><input id="c-source" placeholder="如 BOSS直聘 / 牛客 / 官网">
+      <div class="muted" id="c-url-show" style="word-break:break-all;margin:2px 0 8px"></div>
       <label>JD（可选）</label><textarea id="c-jd" rows="5" placeholder="自动抓取，可修改"></textarea>
       <button id="cap-save" class="primary">加入岗位池</button>
     </div>
