@@ -1357,6 +1357,16 @@ window.testLLM = async () => {
   maybeShowReadinessPopup();
 })();
 
+/* 扩展一键捕捉 / 其他端改动后，切回工作台或窗口获得焦点时自动刷新，
+   避免岗位池/看板停留在旧列表（无需手动 F5）。 */
+function autoRefreshOnFocus() {
+  try { renderJobs(); } catch (e) {}
+  try { renderDashboard(); } catch (e) {}
+  try { renderPrecision(); } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) autoRefreshOnFocus(); });
+window.addEventListener('focus', autoRefreshOnFocus);
+
 /* 每日打开工作台弹窗：问是否准备好面试。选「做好了」→ 之后跳过 0-99 小厂。 */
 async function maybeShowReadinessPopup() {
   try {

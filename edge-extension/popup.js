@@ -112,8 +112,15 @@ document.getElementById('cap-save').addEventListener('click', async () => {
   };
   setStatus('正在加入岗位池…');
   const r = await callApi('capture', payload);
-  if (r.ok) { setStatus('✓ 已加入岗位池（来源：' + (payload.source || 'Edge捕捉') + '）'); document.getElementById('cap-form').style.display = 'none'; }
-  else setStatus('失败：' + (r.error || '未知错误'), true);
+  // 真实结果判定：relay 现在会透传 HTTP 状态；只有服务端返回 job_id 才算成功
+  if (r.ok && r.data && (r.data.job_id || r.data.ok)) {
+    setStatus('✓ 已加入岗位池（#' + (r.data.job_id != null ? r.data.job_id : '') + '，来源：' + (payload.source || 'Edge捕捉') + '）\n回到工作台刷新页面即可看到');
+    document.getElementById('cap-form').style.display = 'none';
+  } else {
+    const msg = (r.data && (r.data.detail || r.data.message || r.data.error || r.data.reason))
+      || r.error || '未知错误（未收到服务端响应）';
+    setStatus('保存失败：' + msg + '\n请确认本地服务已在 8787 运行，并刷新工作台页面', true);
+  }
 });
 
 /* ---------- 填网申 ---------- */

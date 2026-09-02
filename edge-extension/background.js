@@ -8,8 +8,9 @@ function relay(type, path, payload) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload || {})
     })
-      .then(r => r.json())
-      .then(d => resolve({ ok: true, data: d }))
+      .then(r => r.json()
+        .then(d => resolve({ ok: r.ok, status: r.status, data: d }))
+        .catch(() => resolve({ ok: r.ok, status: r.status, data: {} })))
       .catch(e => resolve({ ok: false, error: String(e) }));
   });
 }
