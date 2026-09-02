@@ -15,16 +15,26 @@ chrome.action.onClicked.addListener((tab) => {
   });
 });
 
-function relay(type, path, payload) {
+function relay(type, path, payload, method) {
+  method = method || 'POST';
   return new Promise(resolve => {
-    fetch(API + path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload || {})
-    })
+    const opts = {
+      method,
+      headers: { 'Content-Type': 'application/json' }
+    };
+    if (method !== 'GET' && method !== 'HEAD') {
+      opts.body = JSON.stringify(payload || {});
+    }
+    fetch(API + path, opts)
       .then(r => r.json()
-        .then(d => resolve({ ok: r.ok, status: r.status, data: d }))
-        .catch(() => resolve({ ok: r.ok, status: r.status, data: {} })))
+        .then(d => {
+          const base = { ok: r.ok, status: r.status, data: d };
+          if (!r.ok && !d.detail && !d.message && !d.error && !d.reason) {
+            base.error = `HTTP ${r.status} ${r.statusText || ''}`.trim();
+          }
+          resolve(base);
+        })
+        .catch(() => resolve({ ok: r.ok, status: r.status, data: {}, error: r.ok ? undefined : `HTTP ${r.status} 非 JSON 响应` })))
       .catch(e => resolve({ ok: false, error: String(e) }));
   });
 }
@@ -47,7 +57,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'form-data') {
-    relay('form-data', '/api/extension/form-data').then(sendResponse);
+    relay('form-data', '/api/extension/form-data', {}, 'GET').then(sendResponse);
     return true;
   }
   if (msg.type === 'fill-netapply') {

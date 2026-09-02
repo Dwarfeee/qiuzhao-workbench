@@ -208,7 +208,13 @@ document.getElementById('cap-save').addEventListener('click', async () => {
 document.getElementById('fill').addEventListener('click', async () => {
   setStatus('拉取网申信息…');
   const r = await callApi('form-data');
-  if (!r.ok) { setStatus('拉取失败：' + (r.error || ''), true); return; }
+  if (!r.ok) {
+    const detail = r.error || (r.status ? `HTTP ${r.status}` : '')
+      + (r.data && (r.data.detail || r.data.message) ? ` · ${r.data.detail || r.data.message}` : '');
+    setStatus('拉取失败：' + (detail || '未知错误，请确认服务已启动（127.0.0.1:8787）'), true);
+    console.warn('form-data failed', r);
+    return;
+  }
   const data = r.data || {};
   const sel = document.getElementById('f-company');
   const comps = data.companies || [];
