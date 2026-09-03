@@ -306,7 +306,8 @@ document.getElementById('fill-go').addEventListener('click', async () => {
       const mapped = [];
       for (const lab of aiLabels) {
         const val = er.data.map[lab];
-        if (val) mapped.push({ key: '__' + lab, value: String(val) });
+        if (val == null || val === '') continue;
+        mapped.push({ key: '__' + lab, value: Array.isArray(val) ? val : String(val) });
       }
       if (mapped.length) {
         const rE = await sendFill({ mapped });

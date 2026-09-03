@@ -1,21 +1,32 @@
 /* 秋招工作台助手 · 内容脚本（接收 fill 指令，按 label/name/placeholder 启发式填充表单） */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'fill') {
-    try {
-      // 关键路径优化（对标市面一键填表插件）：匹配规划同步完成（毫秒级），
-      // DOM 写入放到 requestAnimationFrame 异步批处理，弹窗立即拿到 filled/unfilled/all，
-      // 绝不为等页面格式化脚本而阻塞。
-      const plan = planFill(msg);
-      writeFill(plan.matches);
-      sendResponse({ ok: true, filled: plan.matches.length, unfilled: plan.unfilled, all: plan.all });
-    } catch (e) {
-      sendResponse({ ok: false, error: String(e) });
-    }
+    // 异步执行：匹配规划同步完成（毫秒级），DOM 写入异步批处理，绝不阻塞弹窗
+    (async () => {
+      try {
+        const plan = planFill(msg);
+        // 基础字段先写
+        writeFill(plan.matches);
+        // LLM 二次映射补全（支持多值拆分、自动添加新行）
+        let aiFilled = 0;
+        if (msg.mapped && msg.mapped.length) {
+          aiFilled = await fillByMapped(msg.mapped);
+        }
+        sendResponse({
+          ok: true,
+          filled: plan.matches.length + aiFilled,
+          unfilled: plan.unfilled,
+          all: plan.all
+        });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e) });
+      }
+    })();
     return true;
   }
 });
 
-// 字段名 → 规范键 的映射（兼容中英文）
+// 字段名 → 规范键 的映射（兼容中英文）。只放硬事实，不放叙述类，避免把工作经历误填进实习经历。
 const CANON = [
   ['name', ['姓名', '名字', '真实姓名', 'name']],
   ['email', ['邮箱', '电子邮件', 'email', 'e-mail', 'mail']],
@@ -60,6 +71,40 @@ function labelOf(el) {
   return '';
 }
 
+// 获取字段所在板块/分组标题，用于区分「实习经历 > 工作经历」这类歧义标签
+function sectionHeading(el) {
+  let n = el.closest('section, fieldset, [class*="section"], [class*="group"], [class*="block"], [class*="panel"], [class*="card"]');
+  while (n) {
+    const h = n.querySelector('h1,h2,h3,h4,h5,h6,legend,.title,[class*="title"],[class*="header"],[class*="heading"]');
+    if (h && h.textContent.trim()) {
+      const t = h.textContent.trim().replace(/\s+/g, ' ');
+      if (!/^(下一步|提交|保存|取消|返回|上一步|确认)$/i.test(t)) return t;
+    }
+    n = n.parentElement && n.parentElement.closest('section, fieldset, [class*="section"], [class*="group"], [class*="block"], [class*="panel"], [class*="card"]');
+  }
+  return '';
+}
+
+function richLabelOf(el) {
+  const raw = labelOf(el).trim().replace(/\s+/g, ' ');
+  const sec = sectionHeading(el);
+  if (sec && sec !== raw && !raw.toLowerCase().startsWith(sec.toLowerCase())) {
+    return `${sec} > ${raw || '输入框'}`;
+  }
+  return raw || '';
+}
+
+function sectionElement(el) {
+  return el.closest('section, fieldset, [class*="section"], [class*="group"], [class*="block"], [class*="panel"], [class*="card"]');
+}
+
+function findSectionByHeading(text) {
+  if (!text) return null;
+  const headings = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6,legend,.title,[class*="title"],[class*="header"],[class*="heading"]')];
+  const h = headings.find(x => x.textContent.trim().replace(/\s+/g, ' ') === text);
+  return h ? sectionElement(h) : null;
+}
+
 function buildLookup(msg) {
   const lookup = {};
   const p = msg.personal || {};
@@ -70,12 +115,13 @@ function buildLookup(msg) {
     if (key) lookup[key] = f.value;
     else lookup['__' + (f.label || '').trim()] = f.value;
   });
-  // LLM 二次映射补进来的显式键值对（key 已规范化，直接入表）
-  (msg.mapped || []).forEach(m => { if (m.key && m.value) lookup[m.key] = m.value; });
+  // LLM 二次映射补进来的显式键值对（key 已规范化或带 __richLabel）
+  (msg.mapped || []).forEach(m => { if (m.key && m.value != null) lookup[m.key] = m.value; });
   return lookup;
 }
 
 function setElValue(el, val) {
+  if (Array.isArray(val)) val = val.join('\n');
   if (el.tagName === 'SELECT') {
     for (const opt of el.options) {
       if (opt.text.includes(val) || opt.value === val) { el.value = opt.value; break; }
@@ -104,12 +150,12 @@ function planFill(msg) {
   const unfilled = [];
   const allLabels = [];
   for (const el of els) {
-    const lab = labelOf(el);
-    if (lab.trim()) allLabels.push(lab.trim());
-    const key = canonicalize(lab);
-    const val = key ? lookup[key] : lookup['__' + lab.trim()];
-    if (val) matches.push({ el, val });
-    else if (lab.trim()) unfilled.push(lab.trim());
+    const rich = richLabelOf(el);
+    if (rich) allLabels.push(rich);
+    const key = canonicalize(rich);
+    const val = key ? lookup[key] : lookup['__' + rich];
+    if (val != null && String(val).trim()) matches.push({ el, val, label: rich });
+    else if (rich) unfilled.push(rich);
   }
   return { matches, unfilled, all: allLabels };
 }
@@ -125,4 +171,83 @@ function writeFill(matches) {
     if (i < matches.length) requestAnimationFrame(step);
   }
   requestAnimationFrame(step);
+}
+
+// 查找所有与 rich label 匹配的可填元素（包含 fallback：按字段名后半段匹配）
+function findElsByRichLabel(rich) {
+  let els = [...document.querySelectorAll('input, textarea, select')].filter(el => {
+    const t = (el.type || '').toLowerCase();
+    if (el.tagName === 'SELECT') return true;
+    return !['hidden', 'submit', 'button', 'file', 'checkbox', 'radio'].includes(t);
+  });
+  els = els.filter(e => richLabelOf(e) === rich);
+  if (els.length) return els;
+  // fallback：按 "分组 > 字段" 的字段部分精确匹配
+  const field = rich.includes('>') ? rich.split('>')[1].trim() : rich;
+  if (!field || field === '输入框') return [];
+  return [...document.querySelectorAll('input, textarea, select')].filter(el => {
+    const t = (el.type || '').toLowerCase();
+    if (el.tagName === 'SELECT') return true;
+    return !['hidden', 'submit', 'button', 'file', 'checkbox', 'radio'].includes(t);
+  }).filter(e => labelOf(e).trim().replace(/\s+/g, ' ') === field);
+}
+
+// 在给定容器内点击「添加/新增/增加」按钮，支持常见的文本、图标按钮、div
+function clickAddButton(container) {
+  if (!container) return false;
+  const re = /添加|新增|增加|添加一条|新增一条|再加一条|添加更多|(\badd\b)|(\+)|（\+）/i;
+  const candidates = [...container.querySelectorAll('button, a, span, i, div, svg, [role="button"]')];
+  for (const b of candidates) {
+    const text = (b.textContent || '').trim();
+    const title = (b.getAttribute('title') || '').trim();
+    const cls = (b.className || '').toString();
+    if (re.test(text) || re.test(title) || re.test(cls)) {
+      try { b.click(); return true; } catch (_) {}
+    }
+  }
+  return false;
+}
+
+// 把一组值填到同一 rich label 对应的多个输入框；不够时自动点「添加」按钮创建新行
+async function fillRichLabel(rich, vals) {
+  const values = vals.map(v => String(v).trim()).filter(Boolean);
+  if (!values.length) return 0;
+  let els = findElsByRichLabel(rich);
+  const sectionName = rich.includes('>') ? rich.split('>')[0].trim() : '';
+  let sec = (els.length && sectionElement(els[0])) || findSectionByHeading(sectionName);
+
+  // 行数不够时尝试添加新行
+  let addAttempts = Math.min(8, values.length + 2);
+  while (values.length > els.length && addAttempts-- > 0) {
+    if (!sec && sectionName) sec = findSectionByHeading(sectionName);
+    if (!clickAddButton(sec)) break;
+    await new Promise(r => setTimeout(r, 350));
+    els = findElsByRichLabel(rich);
+  }
+
+  let filled = 0;
+  for (let i = 0; i < Math.min(values.length, els.length); i++) {
+    try { setElValue(els[i], values[i]); filled++; } catch (_) {}
+  }
+  // 还有剩余值，追加到最后一个输入框
+  if (els.length && values.length > els.length) {
+    const extra = values.slice(els.length).join('\n');
+    const last = els[els.length - 1];
+    const cur = last.value || '';
+    setElValue(last, cur ? (cur + '\n' + extra) : extra);
+    filled++;
+  }
+  return filled;
+}
+
+// 处理 LLM 返回的显式映射（支持数组 -> 多行）
+async function fillByMapped(mapped) {
+  let total = 0;
+  for (const m of mapped) {
+    if (!m.key || m.value == null) continue;
+    const rich = m.key.startsWith('__') ? m.key.slice(2) : m.key;
+    const vals = Array.isArray(m.value) ? m.value : [m.value];
+    total += await fillRichLabel(rich, vals);
+  }
+  return total;
 }
