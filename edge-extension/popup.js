@@ -254,6 +254,14 @@ document.getElementById('fill-go').addEventListener('click', async () => {
   await ensureHostPermission(tab.url);
   setStatus('正在填充…');
 
+  // 确保目标页已注入内容脚本（先注入再发消息，避免 "Receiving end does not exist"）
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+  } catch (e) {
+    setStatus('填充失败：无法在该页面注入脚本（' + e.message + '）', true);
+    return;
+  }
+
   const sendFill = (extra) => new Promise(resolve => {
     let settled = false;
     const timer = setTimeout(() => {
