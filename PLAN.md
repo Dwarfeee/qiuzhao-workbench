@@ -267,3 +267,46 @@ Dashboard / 今日岗位 / 岗位池 / 精投中心 / 投递管理 / 面试管�
 3. （可选）Server酱/PushPlus key
 
 **原始资料我只解析、绝不修改。**
+
+---
+
+## 14. 产品范围精简决策（2026-09-03）
+
+> 性质：**范围缩减（scope cut）**，非破坏性数据改动；回归 v2.0 原始定位「人工投递 → 投递跟踪」。
+> 对应提交 `41432fa`，里程碑标签 **`v0.3.0`**。
+
+### 14.1 决策内容
+
+经多轮实测后，用户决定砍掉两块功能、只保留核心捕捉能力：
+
+1. **移除工作台「网申信息总汇」板块**（侧边栏导航 + `#page-netapply` 整页）。
+2. **删除 Edge 插件「自动填网申」功能**，插件只剩「一键捕捉岗位」。
+
+### 14.2 决策理由
+
+- 自动填网申投入产出比低：
+  - 各家 ATS 表单结构差异极大，规则填充覆盖率有限，缺口字段仍需人工补；
+  - 实测出现过「实习经历误填为工作经历」「多值字段（如 6 个奖项）挤进同一栏、无法自动加行」等智能度问题，需逐站补识别规则，维护成本高；
+  - 填表依赖「网申信息总汇」维护大量结构化字段（姓名/邮箱/手机/政治面貌/英语等级…），又需配套附件上传与 LLM 文档识别，链路重。
+- 用户定位回归本系统原始职责：**AI 负责捕捉岗位、分析 JD、定制简历与打招呼语；网申表单填写回归人工**（人力投入更直接、更可控）。
+
+### 14.3 影响（已删除的代码 / 文件）
+
+| 位置 | 删除内容 |
+|---|---|
+| `web/index.html` | 「网申信息总汇」侧边栏项 + `#page-netapply` 区块 |
+| `web/js/app.js` | `renderNetApply` 及 `netapplyForm` / `extractNetapply` / `editNetapply` / `delNetapply` / `wireNetApply` + `loadPage` 映射 |
+| `edge-extension/popup.html` | 「填网申」按钮 + `fill-box`（含 `ats-opt` / `rec-resume`） |
+| `edge-extension/popup.js` | `fill` / `fill-go` / `rec-resume` 处理器（保留 `getStoredTargetTab`，捕捉仍用） |
+| `edge-extension/background.js` | `form-data` / `fill-netapply` / `fill-ats` / `fill-enhance` / `recommend-resume` / `smart-fill-map` 六个中继 |
+| `edge-extension/content.js` | 删除（仅为填表注入脚本）；`manifest.json` 移除 `content_scripts` 条目 |
+| `server/app.py` | 网申信息总汇 CRUD、附件上传/下载/识别、`_llm_refine_doc`、全部 extension 填表接口（`form-data` / `smart-fill-map` / `fill-netapply` / `fill-ats` / `fill-enhance` / `recommend-resume`）及辅助函数 |
+| `server/db.py` | 不再创建 `net_apply_info` 表与迁移（`jobs.db` 中旧表保留为孤立表，未 DROP，防数据丢失） |
+| `server/config.py` | 移除无引用的 `UPLOAD_DIR` |
+| `edge-extension/README.md` | 同步去掉填网申说明 |
+
+### 14.4 保留并验证可用
+
+- Edge 插件「一键捕捉岗位」全链路正常：`capture` / `smart-capture`（DeepSeek 解析）/ `find-company-site`。
+- 删除后 `py_compile` 通过、全仓库无 `netapply` / `fill` / `content.js` 残留引用；`/api/netapply` 返回 404，捕捉接口均 200。
+- 运维提示：改 `manifest.json` / 插件文件后须到 `edge://extensions` 重新加载扩展；`app.py` 改动需重启本地服务（或走 `start-server.bat` 自带 `--reload`）。
