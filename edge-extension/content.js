@@ -66,8 +66,15 @@ function labelOf(el) {
   const ph = el.getAttribute('placeholder');
   if (ph && ph.trim()) return ph;
   if (id) return id;
+  // 包裹型 label
   const wrap = el.closest('label');
   if (wrap) return wrap.textContent;
+  // 兄弟 / 容器内 label（最常见：<div class="form-item"><label>姓名</label><input></div>）
+  const container = el.closest('[class*="form-item"], [class*="item"], [class*="field"], [class*="form"], [class*="row"], [class*="col"], [class*="control"], [class*="group"], [class*="wrap"], [class*="box"], .el-form-item, .ant-form-item, li, tr') || el.parentElement;
+  if (container) {
+    const lab = container.querySelector('label, [class*="label"]');
+    if (lab && lab !== el && lab.textContent.trim()) return lab.textContent.trim().replace(/\s+/g, ' ');
+  }
   return '';
 }
 
@@ -192,62 +199,119 @@ function findElsByRichLabel(rich) {
   }).filter(e => labelOf(e).trim().replace(/\s+/g, ' ') === field);
 }
 
-// 在给定容器内点击「添加/新增/增加」按钮，支持常见的文本、图标按钮、div
-function clickAddButton(container) {
-  if (!container) return false;
-  const re = /添加|新增|增加|添加一条|新增一条|再加一条|添加更多|(\badd\b)|(\+)|（\+）/i;
-  const candidates = [...container.querySelectorAll('button, a, span, i, div, svg, [role="button"]')];
-  for (const b of candidates) {
+// 把 LLM 返回值规整为「多行条目」数组：兼容数组 / 换行文本 / 编号列表 / 分号分隔
+function toItems(raw) {
+  if (Array.isArray(raw)) return raw.map(v => String(v).trim()).filter(Boolean);
+  const s = String(raw || '').trim();
+  if (!s) return [];
+  const lines = s.split(/\r?\n/).map(x => stripMarker(x.trim())).filter(Boolean);
+  if (lines.length >= 2) return lines;
+  const bySemi = s.split(/[；;]/).map(x => x.trim()).filter(Boolean);
+  if (bySemi.length >= 2) return bySemi;
+  return [s];
+}
+function stripMarker(s) {
+  return s.replace(/^(\d+[\.、)）]|\(\d+\)|[一二三四五六七八九十]+[、．.]|[•\-*·]|[A-Za-z]\.?\)|\+)\s*/, '').trim();
+}
+
+// 找到「字段组」容器：包裹该输入框及其重复行的紧邻祖先（form-item / li / tr / fieldset 等）
+function fieldGroupOf(el) {
+  let n = el;
+  for (let i = 0; i < 8 && n; i++) {
+    const cls = (n.className || '').toString();
+    if (/form-item|formItem|form_item|form-group|formGroup|el-form-item|ant-form-item|ivu-form-item|field-item|fieldItem|form-row|formRow|form_field|item-row|itemRow|form-control-wrap|widget|row-item|rowItem/i.test(cls)) return n;
+    if (/^(LI|TR|FIELDSET)$/.test(n.tagName)) return n;
+    n = n.parentElement;
+  }
+  return null; // 找不到清晰字段组 -> 由调用方降级为单框换行
+}
+
+// 在范围内查找「添加/新增」按钮（排除上传/附件类按钮，避免误点）
+function clickAddButton(scope) {
+  if (!scope) return false;
+  const re = /(添加|新增|增加|再加|添加一条|新增一条|add)/i;
+  const plus = /[＋+]/;
+  const bad = /(附件|图片|图像|照片|文件|上传|简历|证件|头像|作品|photo|upload|file|img)/i;
+  const cands = [...scope.querySelectorAll('button, a, span, i, div, svg, [role="button"]')];
+  for (const b of cands) {
     const text = (b.textContent || '').trim();
     const title = (b.getAttribute('title') || '').trim();
+    const aria = (b.getAttribute('aria-label') || '').trim();
     const cls = (b.className || '').toString();
-    if (re.test(text) || re.test(title) || re.test(cls)) {
+    const isAdd = re.test(text) || re.test(title) || re.test(aria)
+      || (plus.test(text) && text.length <= 4) || plus.test(cls);
+    if (isAdd && !bad.test(text) && !bad.test(title) && !bad.test(cls)) {
       try { b.click(); return true; } catch (_) {}
     }
   }
   return false;
 }
 
-// 把一组值填到同一 rich label 对应的多个输入框；不够时自动点「添加」按钮创建新行
-async function fillRichLabel(rich, vals) {
-  const values = vals.map(v => String(v).trim()).filter(Boolean);
+// 把多个条目填进同一字段：先按字段组填入，不够时自动点「添加」新建行；
+// 每加一行通常是独立 Form.Item，故加行后在「板块」范围内按位置继续填（用空 label 的同类输入框识别重复行，避免误填兄弟字段）
+async function fillRichLabel(rich, rawVals) {
+  const values = toItems(rawVals);
   if (!values.length) return 0;
-  let els = findElsByRichLabel(rich);
-  const sectionName = rich.includes('>') ? rich.split('>')[0].trim() : '';
-  let sec = (els.length && sectionElement(els[0])) || findSectionByHeading(sectionName);
+  const firstEls = findElsByRichLabel(rich);
+  if (!firstEls.length) return 0;
+  const anchor = firstEls[0];
+  const group = fieldGroupOf(anchor);
+  const section = sectionElement(anchor) || document;
 
-  // 行数不够时尝试添加新行
-  let addAttempts = Math.min(8, values.length + 2);
-  while (values.length > els.length && addAttempts-- > 0) {
-    if (!sec && sectionName) sec = findSectionByHeading(sectionName);
-    if (!clickAddButton(sec)) break;
-    await new Promise(r => setTimeout(r, 350));
-    els = findElsByRichLabel(rich);
-  }
+  const sameKind = (e) => {
+    const t = (e.type || '').toLowerCase();
+    if (e.tagName === 'SELECT' || anchor.tagName === 'SELECT') return e.tagName === anchor.tagName;
+    return !['hidden', 'submit', 'button', 'file', 'checkbox', 'radio'].includes(t);
+  };
+  // 目标输入框：标签精确匹配 rich，或「无标签 + 同类型」（重复行通常无标签）
+  const isTarget = (e) => richLabelOf(e) === rich || (labelOf(e).trim() === '' && sameKind(e));
 
   let filled = 0;
-  for (let i = 0; i < Math.min(values.length, els.length); i++) {
-    try { setElValue(els[i], values[i]); filled++; } catch (_) {}
+  for (let attempt = 0; attempt < values.length + 8; attempt++) {
+    // 候选：优先字段组；字段组已用尽或为空时，扩大到板块（只取 anchor 及其之后、且为目标输入框的）
+    let cands = [];
+    if (group) cands = [...group.querySelectorAll('input, textarea, select')].filter(sameKind).filter(isTarget);
+    if (cands.length <= filled) {
+      cands = [...section.querySelectorAll('input, textarea, select')].filter(sameKind).filter(isTarget);
+    }
+    const ai = cands.indexOf(anchor);
+    if (ai >= 0) cands = cands.slice(ai);
+    let placed = false;
+    for (const inp of cands) {
+      if (inp.__ff_done) continue;
+      if (filled < values.length) {
+        try { setElValue(inp, values[filled]); inp.__ff_done = true; filled++; placed = true; } catch (_) {}
+      }
+    }
+    if (filled >= values.length) break;
+    const clicked = clickAddButton(group) || clickAddButton(section) || clickAddButton(document);
+    if (!clicked) break;
+    await new Promise(r => setTimeout(r, 350));
   }
-  // 还有剩余值，追加到最后一个输入框
-  if (els.length && values.length > els.length) {
-    const extra = values.slice(els.length).join('\n');
-    const last = els[els.length - 1];
-    const cur = last.value || '';
-    setElValue(last, cur ? (cur + '\n' + extra) : extra);
-    filled++;
+  // 兜底：仍有剩余条目 -> 拼到最后一个已填输入框（换行）
+  if (filled < values.length) {
+    let cands = [];
+    if (group) cands = [...group.querySelectorAll('input, textarea, select')].filter(sameKind).filter(isTarget);
+    if (cands.length <= filled) cands = [...section.querySelectorAll('input, textarea, select')].filter(sameKind).filter(isTarget);
+    const done = cands.filter(i => i.__ff_done);
+    if (done.length) {
+      const last = done[done.length - 1];
+      const extra = values.slice(filled).join('\n');
+      const cur = last.value || '';
+      try { setElValue(last, cur ? cur + '\n' + extra : extra); } catch (_) {}
+    }
+    filled = values.length;
   }
   return filled;
 }
 
-// 处理 LLM 返回的显式映射（支持数组 -> 多行）
+// 处理 LLM 返回的显式映射（支持数组 -> 多行/自动加行）
 async function fillByMapped(mapped) {
   let total = 0;
   for (const m of mapped) {
     if (!m.key || m.value == null) continue;
     const rich = m.key.startsWith('__') ? m.key.slice(2) : m.key;
-    const vals = Array.isArray(m.value) ? m.value : [m.value];
-    total += await fillRichLabel(rich, vals);
+    total += await fillRichLabel(rich, m.value);
   }
   return total;
 }
