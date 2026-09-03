@@ -48,32 +48,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     relay('smart-capture', '/api/extension/smart-capture', msg.payload).then(sendResponse);
     return true;
   }
-  if (msg.type === 'smart-fill-map') {
-    relay('smart-fill-map', '/api/extension/smart-fill-map', msg.payload).then(sendResponse);
-    return true;
-  }
   if (msg.type === 'find-company-site') {
     relay('find-company-site', '/api/extension/find-company-site', msg.payload).then(sendResponse);
-    return true;
-  }
-  if (msg.type === 'form-data') {
-    relay('form-data', '/api/extension/form-data', {}, 'GET').then(sendResponse);
-    return true;
-  }
-  if (msg.type === 'fill-netapply') {
-    relay('fill-netapply', '/api/extension/fill-netapply', msg.payload).then(sendResponse);
-    return true;
-  }
-  if (msg.type === 'fill-ats') {
-    relay('fill-ats', '/api/extension/fill-ats', msg.payload).then(sendResponse);
-    return true;
-  }
-  if (msg.type === 'fill-enhance') {
-    relay('fill-enhance', '/api/extension/fill-enhance', msg.payload).then(sendResponse);
-    return true;
-  }
-  if (msg.type === 'recommend-resume') {
-    relay('recommend-resume', '/api/extension/recommend-resume', msg.payload).then(sendResponse);
     return true;
   }
 });

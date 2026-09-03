@@ -26,9 +26,6 @@ CHROME_CANDIDATES = [
 # ---- Candidate 文件存储 ----
 CANDIDATE_DIR = ROOT / "candidate"
 
-# ---- 网申信息总汇：上传的附件（PDF/Word/图片/等）存储目录 ----
-UPLOAD_DIR = ROOT / "uploads" / "netapply"
-
 # ---- 允许修改的简历区域（白名单，除此之外全部锁定）----
 EDITABLE_REGIONS = ("self_eval", "highlights")
 

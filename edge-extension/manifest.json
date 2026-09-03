@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "秋招工作台助手",
   "version": "0.3.0",
-  "description": "一键捕捉岗位进岗位池；一键填网申（连接本地秋招工作台 http://127.0.0.1:8787）",
+  "description": "一键捕捉岗位进岗位池（连接本地秋招工作台 http://127.0.0.1:8787）",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["http://127.0.0.1:8787/*", "<all_urls>"],
   "action": {
@@ -10,12 +10,5 @@
   },
   "background": {
     "service_worker": "background.js"
-  },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ]
+  }
 }
