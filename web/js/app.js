@@ -588,7 +588,11 @@ window.setReady = async id => {
   try {
     const r = await api(`/api/applications/${id}/status`, { method: 'POST', body: JSON.stringify({ status: 'Ready to Apply' }) });
     let msg = '✓ READY TO APPLY — 材料齐备，请人工投递';
-    if (r.exported_to) msg += '；简历已下载到 桌面/秋招简历';
+    if (r.exported_to) {
+      const d = new Date();
+      const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      msg += `；简历已下载到 桌面/秋招简历/${day}`;
+    }
     toast(msg);
     renderPrecision();
     renderToday();
@@ -1153,7 +1157,7 @@ async function renderResume() {
   const approved = versions.filter(v => v.approved);
   $('#approved-list').innerHTML = approved.length ? `<div class="card approved-box">
     <h3>✓ 已满意 · 待投递（共 ${approved.length} 份）</h3>
-    <div class="muted">这些简历已点「✓ 满意此简历」并准备投递；点「准备投递」时 PDF 已自动下载到 <span class="mono">C:\\Users\\19600\\Desktop\\秋招简历</span>（也可点下方按钮补下载）。</div>
+    <div class="muted">这些简历已点「✓ 满意此简历」并准备投递；点「准备投递」时 PDF 已自动下载到 <span class="mono">C:\\Users\\19600\\Desktop\\秋招简历\\当天日期</span>（按 YYYY-MM-DD 每天新建一个文件夹，也可点下方按钮补下载）。</div>
     ${approved.map(v => `<div class="appr-row"><div><b>${esc(v.company)}</b> · ${esc(v.position)} ${v.app_status ? `<span class="tag">${esc(v.app_status)}</span>` : ''}</div>
       <div class="jc-actions">
         <a class="btn sm" href="/api/resume/versions/${v.id}/pdf" target="_blank">📄 PDF</a>

@@ -251,12 +251,15 @@ def get_version_pdf(rv_id: int):
 
 
 def export_resume_to_desktop(rv_id: int) -> dict:
-    """把已通过 Diff 的定制简历 PDF 复制到「桌面/秋招简历」目录。
+    """把已通过 Diff 的定制简历 PDF 复制到「桌面/秋招简历/<当天日期>」目录（按天分文件夹）。
 
+    每天在该目录下新建一个以当天日期命名的子文件夹（格式 YYYY-MM-DD），
+    当天下载的简历都放进当天的文件夹。
     点「准备投递」时自动调用；也可经 export-desktop 接口手动触发。
     失败只返回 ok=False，绝不抛异常中断主流程。
     """
     import re
+    from datetime import datetime
     conn = connect()
     try:
         rv = conn.execute(
@@ -269,7 +272,9 @@ def export_resume_to_desktop(rv_id: int) -> dict:
     src = Path(rv["pdf_path"])
     if not src.exists():
         return {"ok": False, "error": "PDF 文件不存在"}
-    dest_dir = config.RESUME_EXPORT_DIR
+    # 按当天日期分子文件夹：桌面/秋招简历/YYYY-MM-DD/（目录不存在会自动创建）
+    day_folder = datetime.now().strftime("%Y-%m-%d")
+    dest_dir = config.RESUME_EXPORT_DIR / day_folder
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:  # noqa: BLE001
