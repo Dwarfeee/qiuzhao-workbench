@@ -585,7 +585,13 @@ function precisionCard(a) {
 }
 
 window.setReady = async id => {
-  try { await api(`/api/applications/${id}/status`, { method: 'POST', body: JSON.stringify({ status: 'Ready to Apply' }) }); toast('✓ READY TO APPLY — 材料齐备，请人工投递'); renderPrecision(); }
+  try {
+    const r = await api(`/api/applications/${id}/status`, { method: 'POST', body: JSON.stringify({ status: 'Ready to Apply' }) });
+    let msg = '✓ READY TO APPLY — 材料齐备，请人工投递';
+    if (r.exported_to) msg += '；简历已下载到 桌面/秋招简历';
+    toast(msg);
+    renderPrecision();
+  }
   catch (e) {
     const map = { jd: 'JD', fit_analysis: '匹配分析', resume: '简历版本', approved: '简历未确认满意' };
     const miss = (e.data?.missing || []).map(k => map[k] || k);
@@ -1118,13 +1124,32 @@ async function renderResume() {
     </tbody></table></div>` :
     `<div class="card"><div class="empty">尚未导入 Master Resume <button class="btn primary" style="margin-top:10px" onclick="importMaster()">从 C:\\Users\\19600\\Desktop\\resume_build 导入（只读快照）</button></div></div>`;
   const versions = await api('/api/resume/versions');
+  const approved = versions.filter(v => v.approved);
+  $('#approved-list').innerHTML = approved.length ? `<div class="card approved-box">
+    <h3>✓ 已满意 · 待投递（共 ${approved.length} 份）</h3>
+    <div class="muted">这些简历已点「✓ 满意此简历」并准备投递；点「准备投递」时 PDF 已自动下载到 <span class="mono">C:\\Users\\19600\\Desktop\\秋招简历</span>（也可点下方按钮补下载）。</div>
+    ${approved.map(v => `<div class="appr-row"><div><b>${esc(v.company)}</b> · ${esc(v.position)} ${v.app_status ? `<span class="tag">${esc(v.app_status)}</span>` : ''}</div>
+      <div class="jc-actions">
+        <a class="btn sm" href="/api/resume/versions/${v.id}/pdf" target="_blank">📄 PDF</a>
+        <button class="btn sm" onclick="exportDesktop(${v.id})">⬇ 下载到桌面</button>
+      </div></div>`).join('')}
+  </div>` : '<div class="empty">暂无已满意简历：在精投中心点「✓ 满意此简历」即可归集到此处</div>';
   $('#versions-list').innerHTML = versions.length ? '<table><thead><tr><th>公司 · 岗位</th><th>Diff</th><th>状态</th><th>生成时间</th><th></th></tr></thead><tbody>' +
     versions.map(v => `<tr><td><b>${esc(v.company)}</b> · ${esc(v.position)}</td>
       <td><b class="${v.diff_status === 'pass' ? 'ok' : v.diff_status === 'fail' ? 'bad' : ''}">${v.diff_status?.toUpperCase()}</b></td>
       <td>${v.status}</td><td class="muted">${esc(v.created_at || '')}</td>
-      <td>${v.diff_status === 'pass' ? `<a class="btn sm" href="/api/resume/versions/${v.id}/pdf" target="_blank">PDF</a> <button class="btn sm" onclick="showVersionDetail(${v.id})">Diff 详情</button>` : `<button class="btn sm" onclick="showVersionDetail(${v.id})">失败原因</button>`}</td></tr>`).join('') + '</tbody></table>'
+      <td>${v.diff_status === 'pass'
+        ? `<a class="btn sm" href="/api/resume/versions/${v.id}/pdf" target="_blank">PDF</a> <button class="btn sm" onclick="showVersionDetail(${v.id})">Diff 详情</button> <button class="btn sm" onclick="exportDesktop(${v.id})">⬇ 下载</button>`
+        : `<button class="btn sm" onclick="showVersionDetail(${v.id})">失败原因</button>`}</td></tr>`).join('') + '</tbody></table>'
     : '<div class="empty">暂无简历版本：在精投中心点「定制简历」生成</div>';
 }
+window.exportDesktop = async id => {
+  try {
+    const r = await api(`/api/resume/versions/${id}/export-desktop`, { method: 'POST' });
+    if (r.ok) toast('✓ 已下载到：' + r.path);
+    else toast('下载失败：' + (r.error || '未知'), true);
+  } catch (e) { toast(e.data?.detail || e.message, true); }
+};
 window.importMaster = async () => { const r = await api('/api/resume/import-master', { method: 'POST' }); if (r.error) { toast(r.error, true); return; } toast('Master Resume 已导入（只读）'); renderResume(); };
 window.showVersionDetail = async id => {
   const v = await api(`/api/resume/versions/${id}`);

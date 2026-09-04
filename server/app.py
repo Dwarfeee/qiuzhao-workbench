@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -203,8 +204,12 @@ def list_resume_versions():
     conn = connect()
     try:
         rows = [dict(r) for r in conn.execute(
-            "SELECT id, job_id, company, position, dir_path, pdf_path, diff_status, status, "
-            "reason, created_at, updated_at FROM resume_version ORDER BY id DESC")]
+            "SELECT rv.id, rv.job_id, rv.company, rv.position, rv.dir_path, rv.pdf_path, "
+            "rv.diff_status, rv.status, rv.reason, rv.created_at, rv.updated_at, "
+            "a.resume_approved AS approved, a.status AS app_status "
+            "FROM resume_version rv "
+            "LEFT JOIN application a ON a.resume_version_id = rv.id "
+            "ORDER BY rv.id DESC")]
         return rows
     finally:
         conn.close()
@@ -243,6 +248,48 @@ def get_version_pdf(rv_id: int):
         raise HTTPException(403, "Diff 未通过，PDF 已锁定（不允许投递）")
     return FileResponse(r["pdf_path"], media_type="application/pdf",
                         filename=Path(r["pdf_path"]).name)
+
+
+def export_resume_to_desktop(rv_id: int) -> dict:
+    """把已通过 Diff 的定制简历 PDF 复制到「桌面/秋招简历」目录。
+
+    点「准备投递」时自动调用；也可经 export-desktop 接口手动触发。
+    失败只返回 ok=False，绝不抛异常中断主流程。
+    """
+    import re
+    conn = connect()
+    try:
+        rv = conn.execute(
+            "SELECT company, position, pdf_path, diff_status FROM resume_version WHERE id=?",
+            (rv_id,)).fetchone()
+    finally:
+        conn.close()
+    if not rv or rv["diff_status"] != "pass" or not rv["pdf_path"]:
+        return {"ok": False, "error": "版本不可用或 PDF 未生成（需 Diff 通过）"}
+    src = Path(rv["pdf_path"])
+    if not src.exists():
+        return {"ok": False, "error": "PDF 文件不存在"}
+    dest_dir = config.RESUME_EXPORT_DIR
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"无法创建导出目录 {dest_dir}：{e}"}
+    base = f"{(rv['company'] or '简历')}_{(rv['position'] or '')}".strip('_')
+    safe = re.sub(r'[\\/:*?"<>|]', '_', base).strip() or '简历'
+    dest = dest_dir / f"{safe}.pdf"
+    if dest.exists():
+        dest = dest_dir / f"{safe}_{rv_id}.pdf"
+    try:
+        shutil.copy2(src, dest)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"复制失败：{e}"}
+    return {"ok": True, "path": str(dest)}
+
+
+@app.post("/api/resume/versions/{rv_id}/export-desktop")
+def export_version_desktop(rv_id: int):
+    """手动把某定制简历 PDF 下载（复制）到桌面「秋招简历」目录。"""
+    return export_resume_to_desktop(rv_id)
 
 
 # ================================================================ 岗位
@@ -798,7 +845,16 @@ def set_application_status(app_id: int, payload: dict):
                 daily.notify_status_change(app["job_id"], jrow["company"], jrow["title"], status)
         except Exception:  # noqa: BLE001
             pass  # 通知失败绝不影响主流程
-        return {"ok": True, "status": status}
+        # 进入「准备投递」：自动把已满意的简历 PDF 下载到桌面「秋招简历」目录
+        exported_to = None
+        if status == "Ready to Apply" and app["resume_version_id"] and rv_ok:
+            try:
+                exp = export_resume_to_desktop(app["resume_version_id"])
+                if exp.get("ok"):
+                    exported_to = exp["path"]
+            except Exception:  # noqa: BLE001
+                pass  # 导出失败不影响主流程（用户可在简历中心手动再下载）
+        return {"ok": True, "status": status, "exported_to": exported_to}
     finally:
         conn.close()
 
