@@ -23,8 +23,8 @@ function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;
 function hostOf(u) { const m = /https?:\/\/([^/?#]+)/i.exec(u || ''); return m ? m[1].replace(/^www\./i, '') : (u || ''); }
 
 const STATUS_LABELS = {
-  'New': 'New', 'Shortlisted': '精投待处理', 'Tailoring': '定制中', 'Ready to Apply': '待投递',
-  'Applied': '已投递', 'Online Assessment': '笔试/OA', 'Interview': '面试中', 'Offer': 'Offer',
+  'New': '新加入', 'Shortlisted': '精投待处理', 'Tailoring': '定制中', 'Ready to Apply': '待投递',
+  'Applied': '已投递', 'Online Assessment': '笔试/OA', 'Interview': '面试中', 'Offer': '已获 Offer',
   'Rejected': '已拒', 'Withdrawn': '已撤回', 'Closed': '已关闭'
 };
 const stCls = s => 'st st-' + String(s).replace(/ /g, '');
@@ -810,7 +810,7 @@ async function renderApplications() {
       <td>${a.grade ? `<span class="badge b-${a.grade}">${a.grade} ${a.fit_score}</span>` : '—'}</td>
       <td><span class="${stCls(a.status)}">${STATUS_LABELS[a.status]}</span>
         <select class="input sel" style="margin-top:4px;font-size:11px" onchange="updateAppStatus(${a.id}, this.value)">
-          ${opts.map(o => `<option ${o === a.status ? 'selected' : ''}>${o}</option>`).join('')}</select></td>
+          ${opts.map(o => `<option value="${o}" ${o === a.status ? 'selected' : ''}>${STATUS_LABELS[o] || o}</option>`).join('')}</select></td>
       <td>${esc(a.applied_date || '—')}</td>
       <td class="muted">${esc(a.next_step || '—')}</td></tr>`).join('') + '</tbody></table></div>'
     : '<div class="empty">暂无投递记录</div>';
