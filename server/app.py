@@ -935,13 +935,16 @@ def approve_resume(app_id: int, payload: dict):
                 raise HTTPException(400, "版本与投递不匹配")
             if rv["diff_status"] != "pass":
                 raise HTTPException(400, "该版本 Diff 未通过，禁止采用（请重新生成）")
+            # 点「✓ 满意此简历」即归集到「今日投递」（ready_at 记录首次进入时间）
             conn.execute(
                 "UPDATE application SET resume_version_id=?, resume_approved=1, "
+                "ready_at = COALESCE(ready_at, datetime('now','localtime')), "
                 "updated_at=datetime('now','localtime') WHERE id=?", (target_rv, app_id))
         else:
+            # 撤回「满意」则移出今日投递
             conn.execute(
-                "UPDATE application SET resume_approved=0, updated_at=datetime('now','localtime') "
-                "WHERE id=?", (app_id,))
+                "UPDATE application SET resume_approved=0, ready_at=NULL, "
+                "updated_at=datetime('now','localtime') WHERE id=?", (app_id,))
         conn.commit()
         return {"ok": True, "resume_approved": approved}
     finally:

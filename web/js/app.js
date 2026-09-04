@@ -787,10 +787,11 @@ window.approveResume = async (appId, rvId, approved) => {
     const r = await api(`/api/applications/${appId}/approve-resume`, {
       method: 'POST',
       body: JSON.stringify({ approved, resume_version_id: rvId || null }) });
-    if (approved) toast('✓ 已标记满意：该简历可用于投递，回到精投中心点「准备投递」');
-    else toast('已取消满意标记');
+    if (approved) toast('✓ 已满意：已加入「今日投递」，回到精投中心点「准备投递」可下载简历');
+    else toast('已取消满意标记，并移出今日投递');
     closeModal();
     renderPrecision();
+    renderToday();
   } catch (e) { toast(e.data?.detail || e.message || '操作失败', true); }
 };
 
