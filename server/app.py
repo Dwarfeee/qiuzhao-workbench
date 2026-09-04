@@ -796,6 +796,29 @@ def list_applications():
         conn.close()
 
 
+@app.get("/api/applications/today")
+def list_applications_today():
+    """今日投递：返回今天（本地日期）首次被设为 Ready to Apply 的岗位列表。"""
+    conn = connect()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            """SELECT a.*, j.company AS j_company, j.title AS j_title,
+                      COALESCE(a.job_url, j.url) AS j_url,
+                      j.location AS j_location, j.company_scale,
+                      j.fit_score, j.grade, j.direction,
+                      COALESCE(a.source_url, j.source_url) AS j_source_url, j.source AS j_source,
+                      rv.diff_status, rv.pdf_path AS rv_pdf
+               FROM application a JOIN job j ON j.id=a.job_id
+               LEFT JOIN resume_version rv ON rv.id=a.resume_version_id
+               WHERE date(a.ready_at) = date('now','localtime')
+               ORDER BY a.ready_at DESC""")]
+        for r in rows:
+            r["match_analysis"] = json.loads(r["match_analysis"] or "null") if "match_analysis" in r else None
+        return rows
+    finally:
+        conn.close()
+
+
 STATUS_CHAIN = ["New", "Shortlisted", "Tailoring", "Ready to Apply", "Applied",
                 "Online Assessment", "Interview", "Offer", "Rejected", "Withdrawn", "Closed"]
 
@@ -829,9 +852,12 @@ def set_application_status(app_id: int, payload: dict):
             if failed:
                 return JSONResponse({"error": "materials_incomplete", "missing": failed}, 400)
         conn.execute(
-            "UPDATE application SET status=?, applied_date=COALESCE(?, applied_date), "
+            "UPDATE application SET status=?, "
+            "ready_at = CASE WHEN ?='Ready to Apply' THEN COALESCE(ready_at, datetime('now','localtime')) ELSE ready_at END, "
+            "applied_date=COALESCE(?, applied_date), "
             "next_step=?, notes=?, updated_at=datetime('now','localtime') WHERE id=?",
-            (status, payload.get("applied_date") if status == "Applied" else None,
+            (status, status,
+             payload.get("applied_date") if status == "Applied" else None,
              payload.get("next_step"), payload.get("notes"), app_id))
         conn.execute(
             "INSERT INTO application_event (application_id, from_status, to_status, note) "

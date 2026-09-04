@@ -593,6 +593,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE application ADD COLUMN source_url TEXT")
     if "job_url" not in acols:
         conn.execute("ALTER TABLE application ADD COLUMN job_url TEXT")
+    # 今日投递：记录首次「准备投递（Ready to Apply）」的本地时间，用于「今日投递」板块聚合
+    if "ready_at" not in acols:
+        conn.execute("ALTER TABLE application ADD COLUMN ready_at TEXT")
     # 秋招状态（用户手动标记：进行中 / 未开始 / 未标记），用于岗位池一眼区分是否已开秋招
     if "fall_recruit" not in jcols:
         conn.execute("ALTER TABLE job ADD COLUMN fall_recruit TEXT NOT NULL DEFAULT ''")

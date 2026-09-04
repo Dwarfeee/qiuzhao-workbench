@@ -42,7 +42,7 @@ $('#nav').addEventListener('click', e => {
 
 function loadPage(p) {
   ({ dashboard: renderDashboard, jobs: renderJobs, precision: renderPrecision,
-     applications: renderApplications, interviews: renderInterviews, sources: renderSources,
+     today: renderToday, applications: renderApplications, interviews: renderInterviews, sources: renderSources,
      review: renderReview, notify: renderNotify, settings: renderSettings }[p] || (() => {}))();
 }
 
@@ -591,6 +591,7 @@ window.setReady = async id => {
     if (r.exported_to) msg += '；简历已下载到 桌面/秋招简历';
     toast(msg);
     renderPrecision();
+    renderToday();
   }
   catch (e) {
     const map = { jd: 'JD', fit_analysis: '匹配分析', resume: '简历版本', approved: '简历未确认满意' };
@@ -608,7 +609,7 @@ window.returnToPool = async id => {
 window.markApplied = async id => {
   const d = prompt('投递日期（YYYY-MM-DD，留空=今天）', '') || '';
   await api(`/api/applications/${id}/status`, { method: 'POST', body: JSON.stringify({ status: 'Applied', applied_date: d || new Date().toISOString().slice(0, 10) }) });
-  toast('已记录投递'); renderPrecision();
+  toast('已记录投递'); renderPrecision(); renderToday();
 };
 window.genGreetings = async jobId => {
   try {
@@ -808,6 +809,30 @@ async function renderApplications() {
       <td>${esc(a.applied_date || '—')}</td>
       <td class="muted">${esc(a.next_step || '—')}</td></tr>`).join('') + '</tbody></table></div>'
     : '<div class="empty">暂无投递记录</div>';
+}
+
+/* ================= 今日投递 ================= */
+async function renderToday() {
+  const apps = await api('/api/applications/today');
+  $('#today-list').innerHTML = apps.length ? apps.map(todayCard).join('')
+    : '<div class="empty">今天还没有准备投递的岗位。在精投中心点「✓ 满意此简历」→「准备投递」，满意简历会自动下载到桌面，并归集到这里。</div>';
+}
+function todayCard(a) {
+  return `<div class="job-card">
+    <div class="row1"><div><span class="jc-company">${esc(a.j_company)}</span> <span class="jc-title">${esc(a.j_title)}</span>
+      <span class="badge b-${a.grade}" style="margin-left:6px">${a.grade} ${a.fit_score}</span></div>
+      <span class="${stCls(a.status)}">${STATUS_LABELS[a.status]}</span></div>
+    <div class="jc-meta">
+      ${a.j_location ? `📍 ${esc(a.j_location)}` : ''}
+      ${a.j_url ? ` · <a href="${esc(a.j_url)}" target="_blank">原岗位链接↗</a>` : ''}
+      ${a.ready_at ? ` · 🕒 准备于 ${esc(a.ready_at)}` : ''}
+    </div>
+    <div class="jc-actions">
+      ${a.rv_pdf && a.diff_status === 'pass' ? `<a class="btn sm" href="/api/resume/versions/${a.resume_version_id}/pdf" target="_blank">📄 简历 PDF</a>` : ''}
+      ${a.rv_pdf && a.diff_status === 'pass' ? `<button class="btn sm" onclick="exportDesktop(${a.resume_version_id})">⬇ 下载到桌面</button>` : ''}
+      <button class="btn sm primary" onclick="markApplied(${a.id})">✓ 已人工投递</button>
+    </div>
+  </div>`;
 }
 window.updateAppStatus = async (id, status) => {
   try {
