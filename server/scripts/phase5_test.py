@@ -20,10 +20,10 @@ from pathlib import Path
 
 import httpx
 
-sys.path.insert(0, r"C:\Users\19600\WorkBuddy\秋招实录")
+sys.path.insert(0, r"C:\Users\<你的用户名>\WorkBuddy\秋招实录")
 
 BASE = "http://127.0.0.1:8787"
-MASTER = Path(r"C:\Users\19600\Desktop\resume_build\resume.html")
+MASTER = Path(r"C:\Users\<你的用户名>\Desktop\resume_build\resume.html")
 PASS, FAIL = [], []
 
 
