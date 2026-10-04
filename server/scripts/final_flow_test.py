@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 
 BASE = "http://127.0.0.1:8787"
-MASTER = Path(r"C:\Users\19600\Desktop\resume_build\resume.html")
+MASTER = Path(r"C:\Users\<你的用户名>\Desktop\resume_build\resume.html")
 PASS, FAIL = [], []
 
 
