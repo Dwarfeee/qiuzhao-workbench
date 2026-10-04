@@ -48,7 +48,7 @@ def main():
 
     # ---------- 2. 种子 KB：真实简历事实 ----------
     api("POST", "/api/kb/personal", json={
-        "name": "贺宣锦", "email": "1960074210@qq.com", "phone": "130-0748-6700",
+        "name": "贺宣锦", "email": "you@example.com", "phone": "138-0000-0000",
         "city": "长沙", "target_cities": ["长沙", "深圳", "杭州", "上海"],
         "target_directions": ["UI/UX", "AI产品", "B端体验设计"],
         "target_positions": ["UI/UX设计师", "AI 产品体验设计师", "交互设计师"],
@@ -184,9 +184,9 @@ def main():
     rv_id = rv.get("resume_version_id")
 
     # ---------- 负向测试：白名单外篡改必须 FAIL ----------
-    sys.path.insert(0, r"C:\Users\19600\WorkBuddy\秋招实录")
+    sys.path.insert(0, r"C:\Users\<你的用户名>\WorkBuddy\秋招实录")
     from server.services.resume import diff_html
-    master_html = open(r"C:\Users\19600\Desktop\resume_build\resume.html", encoding="utf-8").read()
+    master_html = open(r"C:\Users\<你的用户名>\Desktop\resume_build\resume.html", encoding="utf-8").read()
     from server.services import resume as R
     tampered = R.apply_tailoring(master_html, new_eval, new_hl)
     tampered = tampered.replace("湖南科技大学", "清华大学")  # 篡改教育经历
