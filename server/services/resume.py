@@ -1,7 +1,7 @@
 """Master Resume 服务：只读接入、区域锚定、Tailored 版本、程序级 Diff、浏览器渲染 PDF、PDF 验证。
 
 最高约束：
-1. Master 源（C:\\Users\\19600\\Desktop\\resume_build）永不写入；
+1. Master 源（桌面 resume_build 目录）永不写入；
 2. 只允许修改「自我评价」「个人亮点」两个区域，白名单之外的任何结构/文本/属性差异 → diff FAIL → 版本不可用；
 3. 生成 PDF 使用与用户原流程完全一致的方式：Chrome/Edge headless --no-pdf-header-footer。
 4. 溢出检测复用用户自带 measure.js。
