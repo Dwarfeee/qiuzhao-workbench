@@ -10,13 +10,13 @@ PORT = 8787
 BASE_URL = f"http://{HOST}:{PORT}"
 
 # ---- Master Resume（只读源，永不写入）----
-MASTER_SOURCE_DIR = Path(r"C:\Users\19600\Desktop\resume_build")   # 原始环境，只读
+MASTER_SOURCE_DIR = Path.home() / "Desktop" / "resume_build"   # 原始环境，只读
 MASTER_HTML = MASTER_SOURCE_DIR / "resume.html"
 MASTER_SNAPSHOT_DIR = ROOT / "resume" / "master"                   # 系统内只读快照
 VERSIONS_DIR = ROOT / "resume" / "versions"                        # Tailored 版本目录
 
 # ---- 已满意简历导出目录（点「准备投递」时自动把 PDF 复制到此）----
-# 本机即 C:\Users\19600\Desktop\秋招简历；换机器会自动落到对应用户桌面。
+# 换机器会自动落到对应用户桌面的「秋招简历」文件夹。
 RESUME_EXPORT_DIR = Path.home() / "Desktop" / "秋招简历"
 
 # ---- 浏览器渲染 ----
