@@ -1152,7 +1152,7 @@ async function renderResume() {
     <tr><td class="muted">锁定区域</td><td>姓名 / 联系方式 / 教育 / 实习 / 项目 / 荣誉 / 技能 / 排版 / CSS / 图片 / 二维码 / 链接</td></tr>
     <tr><td class="muted">可编辑</td><td><b>自我评价</b>（${(m.self_eval_text || []).length} 条）、<b>个人亮点</b>（${(m.highlights_text || []).length} 项）</td></tr>
     </tbody></table></div>` :
-    `<div class="card"><div class="empty">尚未导入 Master Resume <button class="btn primary" style="margin-top:10px" onclick="importMaster()">从 C:\\Users\\19600\\Desktop\\resume_build 导入（只读快照）</button></div></div>`;
+    `<div class="card"><div class="empty">尚未导入 Master Resume <button class="btn primary" style="margin-top:10px" onclick="importMaster()">从桌面 resume_build 文件夹导入（只读快照）</button></div></div>`;
   const versions = await api('/api/resume/versions');
   const approved = versions.filter(v => v.approved);
   $('#approved-list').innerHTML = approved.length ? `<div class="card approved-box">
