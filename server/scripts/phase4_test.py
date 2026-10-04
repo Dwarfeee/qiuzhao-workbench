@@ -37,7 +37,7 @@ def api(method: str, path: str, **kw):
 def master_hash() -> str:
     return hashlib.sha256(
         (ROOT / ".." / ".." / "Desktop" / "resume_build" / "resume.html")
-        if False else Path(r"C:\Users\19600\Desktop\resume_build\resume.html").read_bytes()).hexdigest()
+        if False else Path(r"C:\Users\<你的用户名>\Desktop\resume_build\resume.html").read_bytes()).hexdigest()
 
 
 def main():
